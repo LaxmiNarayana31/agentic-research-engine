@@ -1,0 +1,33 @@
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Environment Variables & Secrets
+.env
+*.env
+*.env.local
+
+# Databases & Cache Stores
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb*
+.qdrant_storage/
+
+# IDE & System Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
