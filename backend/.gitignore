@@ -24,7 +24,12 @@ htmlcov/
 *.sqlite
 *.sqlite3
 *.duckdb*
+sqlite_dbs/
 .qdrant_storage/
+
+# Logging
+logs/
+*.log
 
 # IDE & System Files
 .DS_Store
