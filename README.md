@@ -1,6 +1,6 @@
 <div align="center">
 <br>
-<img src="./frontend/public/icon.svg" width="80" height="80" alt="Deep Research AI Engine Logo" />
+<img src="assets/logo.svg" width="80" height="80" alt="Deep Research AI Engine Logo" />
 <h1>Deep Research AI Engine</h1>
 <p><b>Autonomous Multi-Agent Deep Research &amp; Intelligence Synthesis Platform</b><br/>
 <i>Decomposing complex inquiries, crawling live web intelligence, verifying factual claims with NLI entailment, and synthesizing publication-grade Markdown dossiers with real-time SSE streaming.</i></p>
@@ -228,6 +228,12 @@ MEMORI_API_KEY=
 
 # Upstash Redis URL, get it from https://console.upstash.com/redis
 REDIS_URL=
+
+# Google OAuth Client ID, get it from https://console.cloud.google.com/apis/credentials
+GOOGLE_CLIENT_ID=
+
+# JWT Secret Key (Optional)
+JWT_SECRET_KEY=
 ```
 
 ```bash
@@ -349,7 +355,3 @@ Contributions make the open-source community an incredible place to learn, inspi
 Distributed under the **MIT License**. See `LICENSE` for more information.
 
 ---
-
-<div align="center">
-  <sub>Engineered with precision for researchers, engineers, and intelligence analysts worldwide.</sub>
-</div>
