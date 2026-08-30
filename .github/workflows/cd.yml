@@ -1,0 +1,56 @@
+name: Continuous Deployment (CD)
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  release-check:
+    name: Production Release & Deploy Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Validate Backend Deployment Build
+        working-directory: backend
+        env:
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || 'dev_key' }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || 'dev_key' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || 'dev_key' }}
+          REDIS_URL: ${{ secrets.REDIS_URL || 'redis://localhost:6379' }}
+        run: |
+          uv sync
+          uv run python -c "from main import app; print('Backend ASGI Application initialized successfully for deployment.')"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build Production Frontend Artifacts
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deployment Success Notification
+        run: |
+          echo "=================================================="
+          echo "🚀 Deep Research AI Engine Build & CD Ready!"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch / Tag: ${{ github.ref }}"
+          echo "=================================================="
