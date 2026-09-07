@@ -80,14 +80,14 @@ class PlannerAgent:
         """Autonomously decomposes research query into as many subtasks and dynamic report sections as the LLM determines necessary."""
         try:
             query = research_query.strip() if research_query else ""
-            if len(query) < 5:
+            if not query:
                 return PlannerOutput(
                     research_query=research_query,
                     sub_tasks=[],
                     report_outline=[],
                     total_tasks=0,
                     is_valid=False,
-                    validation_notes="Research query is too short or ambiguous."
+                    validation_notes="Research query cannot be empty."
                 )
 
             history_context_str = ""
