@@ -1,3 +1,5 @@
+from datetime import datetime
+import re
 from typing import Optional
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
@@ -7,11 +9,11 @@ from app.core.errors import AppException
 from app.core.logging import logger
 from app.dtos.api_dto import ErrorResponse, ResearchPipelineRequest, ResearchPipelineResponse
 from app.models.user import User
+from app.services.pdf_export_service import pdf_export_service
 from app.services.rate_limiter import rate_limit_guard
-from app.services.research_service import ResearchService
+from app.services.research_service import research_service
 
 router = APIRouter()
-research_service = ResearchService()
 
 @router.get("/history", tags=["Orchestration"])
 async def get_research_history(
@@ -124,11 +126,18 @@ async def stream_research_pipeline(
     try:
         user_id = user.id if user else None
         
-        # Check if chat mode is requested
+        # Check if chat mode is requested or if query is a casual greeting
+        q_clean = req.query.strip().lower()
+        is_greeting = q_clean in [
+            "hi", "hello", "hey", "hello!", "hi!", "hey!", "hola",
+            "greetings", "good morning", "good afternoon", "good evening",
+            "how are you", "how are you?", "who are you", "who are you?"
+        ]
         is_chat_mode = (
             req.mode == "chat" or 
             req.effort_level == "chat" or 
-            req.query.strip().lower().startswith("/chat")
+            q_clean.startswith("/chat") or
+            is_greeting
         )
         
         if is_chat_mode:
@@ -183,15 +192,131 @@ async def stream_chat_endpoint(
 @router.get("/stream/{session_id}/subscribe", tags=["Orchestration"])
 async def subscribe_research_stream(
     session_id: str,
+    request: Request,
+    last_event_id: Optional[int] = None,
     user: Optional[User] = Depends(get_optional_user)
 ):
-    """Subscribe or reconnect to an active or past research session stream."""
+    """Subscribe or reconnect to an active or past research session stream with Last-Event-ID resumption."""
     try:
         user_id = user.id if user else None
+        header_eid = request.headers.get("Last-Event-ID")
+        effective_eid = last_event_id
+        if effective_eid is None and header_eid:
+            try:
+                effective_eid = int(header_eid.strip())
+            except ValueError:
+                pass
+
         return StreamingResponse(
-            research_service.subscribe_session_stream(session_id, user_id=user_id),
+            research_service.subscribe_session_stream(
+                session_id,
+                user_id=user_id,
+                last_event_id=effective_eid
+            ),
             media_type="text/event-stream"
         )
     except Exception as e:
         logger.error(f"Failed to subscribe to stream for {session_id}: {e}")
         raise AppException(code="STREAM_ERROR", message=str(e), status_code=500)
+
+@router.post("/{session_id}/cancel", tags=["Orchestration"])
+async def cancel_research_session(
+    session_id: str,
+    user: Optional[User] = Depends(get_optional_user)
+):
+    """Cancel an active or pending background research job."""
+    try:
+        user_id = user.id if user else None
+        res = await research_service.cancel_job(session_id, user_id=user_id)
+        if not res.get("success"):
+            if "unauthorized" in res.get("message", "").lower():
+                raise AppException(code="FORBIDDEN", message=res.get("message"), status_code=403)
+        return res
+    except AppException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling session {session_id}: {e}")
+        raise AppException(code="CANCEL_ERROR", message=str(e), status_code=500)
+
+@router.get("/{session_id}/export/pdf", tags=["Export"])
+@router.get("/history/{session_id}/export/pdf", tags=["Export"])
+async def export_research_session_pdf(
+    session_id: str,
+    turn_idx: Optional[int] = None,
+    user: Optional[User] = Depends(get_optional_user)
+):
+    """Generate and stream a professional vector PDF representation of a research dossier."""
+    try:
+        user_id = user.id if user else None
+        data = await research_service.get_session_by_id(session_id, user_id=user_id)
+        session = data.get("session")
+        if not session:
+            raise AppException(code="NOT_FOUND", message="Session not found or access denied.", status_code=404)
+
+        # Extract target turn or latest turn
+        turns = session.get("turns") or []
+        target_turn = None
+        if turn_idx is not None and 0 <= turn_idx < len(turns):
+            target_turn = turns[turn_idx]
+        elif turns:
+            target_turn = turns[-1]
+        else:
+            target_turn = {
+                "query": session.get("query"),
+                "effort_level": session.get("effort_level", "medium"),
+                "report": session.get("report") or {},
+                "findings": session.get("findings") or [],
+            }
+
+        report_data = target_turn.get("report") or {}
+        markdown_content = report_data.get("markdown_content") or ""
+        if not markdown_content:
+            markdown_content = f"# {target_turn.get('query', 'Research Report')}\n\n*No dossier report text available for this session.*"
+
+        title = report_data.get("title") or target_turn.get("query") or "Research Dossier"
+        query = target_turn.get("query") or session.get("query") or "Research"
+        effort_level = target_turn.get("effort_level") or session.get("effort_level") or "medium"
+
+        # Aggregate sources from turn findings and report
+        sources = []
+        seen_urls = set()
+        for f in target_turn.get("findings") or []:
+            if isinstance(f, dict):
+                for s in f.get("sources") or []:
+                    url = s.get("url") if isinstance(s, dict) else s
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        sources.append(s if isinstance(s, dict) else {"url": url, "title": url})
+
+        created_at_str = session.get("created_at")
+        date_str = None
+        if created_at_str:
+            try:
+                dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                date_str = dt.strftime("%B %d, %Y")
+            except Exception:
+                date_str = None
+
+        pdf_bytes = pdf_export_service.generate_dossier_pdf(
+            title=title,
+            query=query,
+            markdown_content=markdown_content,
+            sources=sources,
+            effort_level=effort_level,
+            date_str=date_str
+        )
+
+        safe_filename = re.sub(r"[^a-zA-Z0-9_\-]", "_", query[:40]).strip("_") or "research_dossier"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_filename}.pdf"',
+                "Content-Type": "application/pdf"
+            }
+        )
+    except AppException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating PDF for session {session_id}: {e}")
+        raise AppException(code="PDF_EXPORT_ERROR", message=f"Failed to generate PDF: {e}", status_code=500)
