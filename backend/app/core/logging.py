@@ -1,8 +1,18 @@
+import contextvars
 from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
+
+# Context variable for request correlation ID
+request_id_cv: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+class RequestIDFilter(logging.Filter):
+    """Injects current correlation/request ID into every log record."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_cv.get("-")
+        return True
 
 # Define log directory at project root: backend/logs/
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -15,7 +25,7 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
     Configures application and framework logging to write to a rotating log file.
     - Limits size to 30MB per file with up to 5 backups.
     - Captures application, uvicorn, and framework logs.
-    - Formats timestamps as DD-MM-YY HH:MM:SS.
+    - Formats timestamps as DD-MM-YY HH:MM:SS with correlation ID [req: <id>].
     """
     # Write startup banner on server launch once
     if not os.environ.get("SERVER_BANNER_PRINTED"):
@@ -46,9 +56,13 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
 
     file_handler.namer = custom_log_namer
 
-    # Formatter: DD-MM-YY HH:MM:SS
+    # Add RequestIDFilter
+    req_filter = RequestIDFilter()
+    file_handler.addFilter(req_filter)
+
+    # Formatter: DD-MM-YY HH:MM:SS [%(request_id)s]
     file_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        "%(asctime)s [%(request_id)s] - %(name)s - %(levelname)s - %(message)s",
         datefmt="%d-%m-%y %H:%M:%S"
     )
     file_handler.setFormatter(file_formatter)
