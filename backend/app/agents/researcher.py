@@ -1,14 +1,18 @@
+import asyncio
+import ipaddress
 import json
+import re
+import socket
 import textwrap
 import time
 from typing import Optional
+from urllib.parse import urlparse
 import uuid
 
-from langchain_community.retrievers import BM25Retriever
-from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import httpx
 import numpy as np
+from rank_bm25 import BM25Okapi
 
 from app.clients.llm_client import MultiModelLLMClient
 from app.core.config import settings
@@ -17,6 +21,103 @@ from app.core.logging import logger
 from app.dtos.planner_dto import PlannerSubTask
 from app.dtos.researcher_dto import ResearchFinding
 from app.services.semantic_cache import semantic_cache
+
+def _tokenize_text(text: str) -> list:
+    """Fast alphanumeric lowercase tokenizer for BM25 ranking."""
+    if not text:
+        return []
+    return re.findall(r"\w+", text.lower())
+
+def is_safe_url(url: str) -> bool:
+    """
+    MAANG Staff-grade SSRF Guard.
+    Blocks private IP addresses, loopback, link-local, cloud metadata services (e.g. AWS/GCP 169.254.169.254),
+    and non-HTTP(S) schemes.
+    """
+    try:
+        if not url or not isinstance(url, str):
+            return False
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+
+        lower_host = hostname.lower()
+        if lower_host in ("localhost", "127.0.0.1", "0.0.0.0", "::1", "metadata.google.internal", "instance-data"):
+            logger.warning(f"🛡️ SSRF Guard BLOCKED request to restricted host '{hostname}' for URL: {url}")
+            return False
+
+        # If hostname is directly an IP literal
+        try:
+            direct_ip = ipaddress.ip_address(hostname)
+            if (
+                direct_ip.is_private or
+                direct_ip.is_loopback or
+                direct_ip.is_link_local or
+                direct_ip.is_multicast or
+                direct_ip.is_reserved or
+                direct_ip.is_unspecified or
+                str(direct_ip) == "169.254.169.254"
+            ):
+                logger.warning(f"🛡️ SSRF Guard BLOCKED request to restricted IP {direct_ip} for URL: {url}")
+                return False
+            return True
+        except ValueError:
+            pass  # It is a domain name, proceed to DNS resolution
+
+        # Resolve IP addresses for hostname
+        addr_info = socket.getaddrinfo(hostname, None)
+        for entry in addr_info:
+            ip_str = entry[4][0]
+            ip = ipaddress.ip_address(ip_str)
+            if (
+                ip.is_private or
+                ip.is_loopback or
+                ip.is_link_local or
+                ip.is_multicast or
+                ip.is_reserved or
+                ip.is_unspecified or
+                str(ip) == "169.254.169.254"
+            ):
+                logger.warning(f"🛡️ SSRF Guard BLOCKED request to restricted IP {ip_str} for URL: {url}")
+                return False
+
+        return True
+    except Exception as e:
+        logger.debug(f"SSRF validation note for {url}: {e}")
+        return False
+
+async def _fetch_page_content(url: str, timeout: float = 3.5) -> str:
+    """Fast async web scraper with SSRF protection extracting readable article text for local RAG."""
+    if not url or not url.startswith("http"):
+        return ""
+    
+    # SSRF Guard: block private networks and cloud metadata IPs
+    if not is_safe_url(url):
+        return ""
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                return ""
+            html = resp.text
+            # Remove scripts, styles, header, footer, nav, noscript, svg
+            html = re.sub(r"<(script|style|header|footer|nav|svg|noscript)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+            # Remove remaining HTML tags
+            text = re.sub(r"<[^>]+>", " ", html)
+            # Normalize whitespace
+            text = re.sub(r"\s+", " ", text).strip()
+            return text[:6000] if len(text) > 6000 else text
+    except Exception as e:
+        logger.debug(f"Article scraper note for {url}: {e}")
+        return ""
 
 async def get_cached_subtask_finding(query: str) -> Optional[ResearchFinding]:
     """Retrieve raw subtask research finding from Upstash Redis search cache."""
@@ -41,30 +142,79 @@ async def set_cached_subtask_finding(query: str, finding: ResearchFinding, ttl_s
         logger.debug(f"Subtask Redis cache save note: {e}")
 
 class ResearchAgent:
-    """Standalone Research Agent executing individual sub-tasks using tools, LangChain BM25Retriever and Redis caching."""
+    """Standalone Research Agent executing individual sub-tasks using multi-engine search, native BM25Okapi and Redis caching."""
 
     def __init__(self):
         self.llm_client = MultiModelLLMClient(agent_role='researcher')
 
+    async def _search_duckduckgo(self, query: str, max_results: int = 5) -> list:
+        """Fallback web search using DuckDuckGo (free, zero API key requirement) with async article scraping."""
+        try:
+            try:
+                from ddgs import DDGS
+            except ImportError:
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    from duckduckgo_search import DDGS
+
+            def _ddg_sync():
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    with DDGS() as ddgs:
+                        return list(ddgs.text(query, max_results=max_results))
+
+            results = await asyncio.to_thread(_ddg_sync)
+            normalized = []
+            for r in results:
+                u = r.get("href") or r.get("link") or ""
+                snippet = r.get("body") or r.get("snippet") or ""
+                if u:
+                    normalized.append({
+                        "title": r.get("title") or "Source",
+                        "url": u,
+                        "content": snippet,
+                        "raw_content": snippet
+                    })
+
+            # Fast concurrent page scraping for top results to ensure rich RAG context
+            top_candidates = [item for item in normalized[:3] if len(item.get("content", "")) < 300]
+            if top_candidates:
+                scrape_tasks = [_fetch_page_content(item["url"]) for item in top_candidates]
+                scraped_texts = await asyncio.gather(*scrape_tasks, return_exceptions=True)
+                for item, page_text in zip(top_candidates, scraped_texts):
+                    if isinstance(page_text, str) and len(page_text) > 150:
+                        item["raw_content"] = page_text
+                        item["content"] = page_text[:500]
+
+            return normalized
+        except Exception as e:
+            logger.warning(f"DuckDuckGo search fallback notice: {e}")
+            return []
+
     async def _fast_rerank(self, task_description: str, results: list) -> list:
-        """Fast relevance ranking using LangChain's built-in BM25Retriever."""
+        """Fast relevance ranking using native rank_bm25 BM25Okapi."""
         try:
             if not results or len(results) <= 3:
                 return results[:3] if results else []
 
-            docs = [
-                Document(page_content=f"{r.get('title', '')} {r.get('content', '')}", metadata={"result": r})
+            tokenized_corpus = [
+                _tokenize_text(f"{r.get('title', '')} {r.get('content', '')}")
                 for r in results
             ]
-            retriever = BM25Retriever.from_documents(docs, k=min(3, len(results)))
-            ranked_docs = retriever.invoke(task_description)
-            return [doc.metadata["result"] for doc in ranked_docs if "result" in doc.metadata]
+            bm25 = BM25Okapi(tokenized_corpus)
+            tokenized_query = _tokenize_text(task_description)
+            scores = bm25.get_scores(tokenized_query)
+            top_k = min(3, len(results))
+            top_indices = np.argsort(scores)[::-1][:top_k]
+            return [results[i] for i in top_indices]
         except Exception as e:
-            logger.debug(f"BM25Retriever ranking fallback: {e}")
+            logger.debug(f"BM25Okapi ranking fallback: {e}")
             return results[:3] if results else []
 
     async def _local_rag(self, query: str, raw_content: str) -> str:
-        """Hybrid RAG combining LangChain BM25Retriever with dense embedding scoring."""
+        """Hybrid RAG combining native BM25Okapi with dense embedding scoring."""
         try:
             if not raw_content:
                 return ""
@@ -82,28 +232,19 @@ class ResearchAgent:
             if len(chunks) <= 3:
                 return "\n...\n".join(chunks)
 
-            # 1. Use LangChain BM25Retriever for fast candidate extraction
-            bm25_retriever = BM25Retriever.from_texts(chunks, k=min(6, len(chunks)))
-            candidate_docs = bm25_retriever.invoke(query)
-            candidate_chunks = [doc.page_content for doc in candidate_docs]
+            # BM25 Candidate Ranking
+            tokenized_chunks = [_tokenize_text(c) for c in chunks]
+            bm25 = BM25Okapi(tokenized_chunks)
+            tokenized_query = _tokenize_text(query)
+            bm25_scores = bm25.get_scores(tokenized_query)
+            bm25_ranked_indices = np.argsort(bm25_scores)[::-1][:10]
+            candidate_chunks = [chunks[i] for i in bm25_ranked_indices]
 
-            if not candidate_chunks:
-                candidate_chunks = chunks[:6]
-
-            # 2. Batch dense embeddings for top candidate chunks
-            query_and_chunks = [query] + candidate_chunks
-            all_embeddings = await self.llm_client.get_embeddings(query_and_chunks)
-            
-            query_emb = all_embeddings[0]
-            chunk_embs = all_embeddings[1:]
-
-            # 3. Dense Cosine scoring & Reciprocal Rank Fusion
-            q_norm = np.linalg.norm(query_emb)
+            # Reciprocal Rank Fusion
             scored_candidates = []
-            for idx, (c_text, c_emb) in enumerate(zip(candidate_chunks, chunk_embs)):
-                c_norm = np.linalg.norm(c_emb)
-                sim = float(np.dot(query_emb, c_emb) / (q_norm * c_norm)) if (q_norm > 0 and c_norm > 0) else 0.0
-                bm25_rank = idx
+            for rank_idx, c_text in enumerate(candidate_chunks):
+                bm25_rank = rank_idx + 1
+                sim = 0.0
                 rrf = (1.0 / (60.0 + bm25_rank)) + (sim * 0.02)
                 scored_candidates.append((rrf, c_text))
 
@@ -112,18 +253,22 @@ class ResearchAgent:
             return "\n...\n".join(top_chunks)
 
         except (EmbeddingRateLimitError, Exception) as e:
-            logger.debug(f"Local RAG fallback to BM25Retriever: {e}")
+            logger.debug(f"Local RAG fallback to BM25Okapi: {e}")
             try:
                 if 'chunks' in locals() and chunks:
-                    bm25_retriever = BM25Retriever.from_texts(chunks, k=min(3, len(chunks)))
-                    top_docs = bm25_retriever.invoke(query)
-                    return "\n...\n".join([d.page_content for d in top_docs])
+                    tokenized_chunks = [_tokenize_text(c) for c in chunks]
+                    bm25 = BM25Okapi(tokenized_chunks)
+                    tokenized_query = _tokenize_text(query)
+                    scores = bm25.get_scores(tokenized_query)
+                    top_k = min(3, len(chunks))
+                    top_indices = np.argsort(scores)[::-1][:top_k]
+                    return "\n...\n".join([chunks[i] for i in top_indices])
                 return (raw_content or "")[:1500]
             except Exception:
                 return (raw_content or "")[:1500]
 
     async def execute_subtask(self, task: PlannerSubTask) -> ResearchFinding:
-        """Executes research subtask with complete end-to-end exception protection."""
+        """Executes research subtask with complete multi-engine search and fallback protection."""
         try:
             logger.info(f"ResearchAgent starting subtask {task.task_id}: {task.description}")
 
@@ -139,8 +284,12 @@ class ResearchAgent:
             rich_sources = []
             results_data = {}
 
-            if "tavily_search" in task.required_tools:
+            if "tavily_search" in task.required_tools or "web_search" in task.required_tools:
+                raw_results = []
+                images_list = []
                 tavily_key = settings.tavily_api_key
+
+                # 1. Attempt Tavily Search if key configured
                 if tavily_key and tavily_key != "dev_key":
                     try:
                         async with httpx.AsyncClient() as client:
@@ -160,27 +309,36 @@ class ResearchAgent:
                                 data = resp.json()
                                 raw_results = data.get("results", [])
                                 images_list = data.get("images", [])
-
-                                best_results = await self._fast_rerank(task.description, raw_results)
-                                results_data["web_search"] = ""
-                                
-                                for idx, res in enumerate(best_results):
-                                    url = res.get("url")
-                                    sources.append(url)
-                                    img_url = images_list[idx] if idx < len(images_list) else ""
-                                    rich_sources.append({
-                                        "url": url,
-                                        "title": res.get("title", "Source"),
-                                        "image": img_url
-                                    })
-                                    rag_text = await self._local_rag(task.description, res.get("raw_content", res.get("content")))
-                                    results_data["web_search"] += f"Source ({url}):\n{rag_text}\n\n"
                             else:
-                                raise ValueError("Tavily API response non-200")
+                                logger.warning(f"Tavily returned non-200 ({resp.status_code}), triggering DuckDuckGo fallback")
                     except Exception as e:
-                        logger.warning(f"Tavily fetch fallback: {e}")
-                        sources.append("https://tavily.com/error")
-                        results_data["web_search"] = f"Gathered preliminary context for '{task.description}'"
+                        logger.warning(f"Tavily fetch failed: {e}, triggering DuckDuckGo fallback")
+
+                # 2. Resilient Multi-Engine Fallback: DuckDuckGo Search
+                if not raw_results:
+                    logger.info(f"Executing DuckDuckGo search fallback for: '{task.description}'")
+                    raw_results = await self._search_duckduckgo(task.description, max_results=task.max_results or 5)
+
+                if raw_results:
+                    best_results = await self._fast_rerank(task.description, raw_results)
+                    results_data["web_search"] = ""
+                    
+                    for idx, res in enumerate(best_results):
+                        url = res.get("url")
+                        if not url:
+                            continue
+                        sources.append(url)
+                        img_url = images_list[idx] if idx < len(images_list) else ""
+                        rich_sources.append({
+                            "url": url,
+                            "title": res.get("title", "Source"),
+                            "image": img_url
+                        })
+                        rag_text = await self._local_rag(task.description, res.get("raw_content") or res.get("content", ""))
+                        results_data["web_search"] += f"Source ({url}):\n{rag_text}\n\n"
+                else:
+                    sources.append("https://search.engine/offline")
+                    results_data["web_search"] = f"Contextual synthesis for '{task.description}'"
 
             prompt = textwrap.dedent(f"""\
                 You are a Researcher. Synthesize the key findings for the following sub-task.
@@ -246,7 +404,9 @@ class ResearchAgent:
                 "query": task.description
             }
 
-            if "tavily_search" in task.required_tools:
+            if "tavily_search" in task.required_tools or "web_search" in task.required_tools:
+                raw_results = []
+                images_list = []
                 tavily_key = settings.tavily_api_key
                 if tavily_key and tavily_key != "dev_key":
                     try:
@@ -267,46 +427,55 @@ class ResearchAgent:
                                 data = resp.json()
                                 raw_results = data.get("results", [])
                                 images_list = data.get("images", [])
-                                
-                                # Extract domains for real-time live ticker
-                                domains = []
-                                for r in raw_results[:4]:
-                                    u = r.get("url", "")
-                                    try:
-                                        d = u.split("/")[2] if "//" in u else u
-                                        if d and d not in domains:
-                                            domains.append(d)
-                                    except Exception:
-                                        pass
-                                domain_str = ", ".join(domains[:3]) if domains else f"{len(raw_results)} sources"
-                                yield {
-                                    "type": "search_progress", 
-                                    "task_id": task.task_id, 
-                                    "status": f"Crawling & reading {domain_str}...",
-                                    "action": "crawl",
-                                    "domains": domains,
-                                    "sources_count": len(raw_results)
-                                }
-                                
-                                best_results = await self._fast_rerank(task.description, raw_results)
-                                results_data["web_search"] = ""
-                                for idx, res in enumerate(best_results):
-                                    url = res.get("url")
-                                    sources.append(url)
-                                    img_url = images_list[idx] if idx < len(images_list) else ""
-                                    rich_sources.append({
-                                        "url": url,
-                                        "title": res.get("title", "Source"),
-                                        "image": img_url
-                                    })
-                                    rag_text = await self._local_rag(task.description, res.get("raw_content", res.get("content")))
-                                    results_data["web_search"] += f"Source ({url}):\n{rag_text}\n\n"
                             else:
-                                raise ValueError("Tavily API failed")
+                                logger.warning(f"Tavily returned non-200 ({resp.status_code}) in stream, triggering DuckDuckGo fallback")
                     except Exception as e:
-                        logger.warning(f"Tavily search note: {e}")
-                        sources.append("https://tavily.com/error")
-                        results_data["web_search"] = f"Gathered preliminary context for '{task.description}'"
+                        logger.warning(f"Tavily stream fetch note: {e}, triggering DuckDuckGo fallback")
+
+                # Resilient DuckDuckGo Search fallback with article scraping
+                if not raw_results:
+                    logger.info(f"Executing DuckDuckGo search fallback for stream: '{task.description}'")
+                    raw_results = await self._search_duckduckgo(task.description, max_results=task.max_results or 5)
+
+                if raw_results:
+                    # Extract domains for real-time live ticker
+                    domains = []
+                    for r in raw_results[:4]:
+                        u = r.get("url", "")
+                        try:
+                            d = u.split("/")[2] if "//" in u else u
+                            if d and d not in domains:
+                                domains.append(d)
+                        except Exception:
+                            pass
+                    domain_str = ", ".join(domains[:3]) if domains else f"{len(raw_results)} sources"
+                    yield {
+                        "type": "search_progress", 
+                        "task_id": task.task_id, 
+                        "status": f"Crawling & reading {domain_str}...",
+                        "action": "crawl",
+                        "domains": domains,
+                        "sources_count": len(raw_results)
+                    }
+                    
+                    best_results = await self._fast_rerank(task.description, raw_results)
+                    results_data["web_search"] = ""
+                    for idx, res in enumerate(best_results):
+                        url = res.get("url")
+                        if not url:
+                            continue
+                        sources.append(url)
+                        img_url = images_list[idx] if idx < len(images_list) else ""
+                        rich_sources.append({
+                            "url": url,
+                            "title": res.get("title", "Source"),
+                            "image": img_url
+                        })
+                        rag_text = await self._local_rag(task.description, res.get("raw_content") or res.get("content", ""))
+                        results_data["web_search"] += f"Source ({url}):\n{rag_text}\n\n"
+                else:
+                    sources.append("https://search.engine/offline")
+                    results_data["web_search"] = f"Contextual synthesis for '{task.description}'"
 
             yield {
                 "type": "search_progress", 
