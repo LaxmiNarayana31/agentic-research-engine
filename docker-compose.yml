@@ -1,0 +1,81 @@
+services:
+  # ─────────────────────────────────────────────
+  # Migration runner — runs alembic upgrade head
+  # against your cloud DB before the backend starts
+  # ─────────────────────────────────────────────
+  migrate:
+    image: deep-research-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deep-research-migrate
+    restart: "no"
+    env_file:
+      - path: ./backend/.env
+        required: true
+    command: ["sh", "-c", "cd /app && alembic upgrade head"]
+    networks:
+      - app-network
+
+  # ─────────────────────────────────────────────
+  # Backend — FastAPI application
+  # ─────────────────────────────────────────────
+  backend:
+    image: deep-research-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deep-research-backend
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - path: ./backend/.env
+        required: true
+    environment:
+      PORT: "8001"
+      PYTHONUNBUFFERED: "1"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3001}
+    volumes:
+      - backend-logs:/app/logs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks:
+      - app-network
+
+  # ─────────────────────────────────────────────
+  # Frontend — Next.js application
+  # ─────────────────────────────────────────────
+  frontend:
+    image: deep-research-frontend:latest
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+    container_name: deep-research-frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app-network
+
+volumes:
+  backend-logs:
+
+networks:
+  app-network:
+    driver: bridge

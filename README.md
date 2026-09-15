@@ -3,7 +3,7 @@
 <img src="assets/logo.svg" width="80" height="80" alt="Deep Research AI Engine Logo" />
 <h1>Deep Research AI Engine</h1>
 <p><b>Autonomous Multi-Agent Deep Research &amp; Intelligence Synthesis Platform</b><br/>
-<i>Decomposing complex inquiries, crawling live web intelligence, verifying factual claims with NLI entailment, and synthesizing publication-grade Markdown dossiers with real-time SSE streaming.</i></p>
+<i>Decompose complex inquiries → crawl live web intelligence → verify claims against source evidence → synthesize publication-grade Markdown dossiers with real-time SSE streaming.</i></p>
 <p>
   <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12"></a>
   <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/FastAPI-0.141-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI"></a>
@@ -16,12 +16,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License: MIT"></a>
 </p>
 <p>
-  <a href="#-executive-overview"><b>Executive Overview</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-system-architecture"><b>System Architecture</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-architecture-deep-dive--data-flow"><b>Architecture Deep Dive</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-how-the-agent-pipeline-works"><b>Agent Pipeline</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-effort-tiers--depth-calibration"><b>Effort Tiers</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-environment-variables-guide"><b>Environment Variables</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="#-executive-overview"><b>Overview</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="#-system-architecture"><b>Architecture</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="#-agent-pipeline-deep-dive"><b>Agent Pipeline</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="#-engineering-highlights"><b>Engineering Highlights</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="#-quick-start"><b>Quick Start</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="#-api-reference"><b>API Reference</b></a>
 </p>
@@ -31,122 +29,95 @@
 
 ## 📖 Executive Overview
 
-Modern technical and scientific research workflows suffer from two fundamental problems: traditional search engines return fragmented, SEO-optimized listicles that require hours of manual collation, while standard Large Language Model (LLM) interfaces hallucinate plausible-sounding facts, fabricate citations, and lack access to live technical documentation.
+Traditional search engines return fragmented, SEO-optimized results that demand hours of manual synthesis. Standard LLM interfaces hallucinate citations, fabricate metrics, and lack access to live data.
 
-**Deep Research AI Engine** is an open-source autonomous intelligence platform designed to eliminate these failure modes. Given a complex, high-level research prompt, the engine orchestrates a decentralized team of five specialized AI agents—**Planner**, **Researcher**, **Verifier**, **Critic**, and **Report Writer**—that autonomously decompose the inquiry, scrape and index live web intelligence, verify claims against raw textual evidence, critique draft quality, and synthesize publication-grade research dossiers complete with verifiable inline citations and comprehensive bibliographies.
+**Deep Research AI Engine** eliminates both failure modes. Given a complex research prompt, it orchestrates **five specialized AI agents** — Planner, Researcher, Verifier, Critic, and Report Writer — that autonomously decompose the inquiry, scrape live web intelligence, verify claims against raw source evidence, critique draft quality, and synthesize publication-grade research dossiers with verifiable inline citations.
 
-The entire orchestration runs asynchronously in the background and streams every event—from subtask dispatch to token-by-token markdown authoring—to a modern Next.js 14 web interface over Server-Sent Events (SSE). Designed for resilience, the platform features a multi-model LLM fallback chain, automatic PostgreSQL-to-SQLite database failover, and sub-200ms semantic vector caching powered by Upstash Redis.
+The entire pipeline runs asynchronously and streams every event — from subtask dispatch to token-by-token markdown authoring — to a Next.js 14 interface over **Server-Sent Events (SSE)**. The platform features fault-tolerant parallel workers, a multi-model LLM fallback chain with automatic 429 retry, exact provider-reported token metering, SSRF-hardened URL fetching, and sub-200ms semantic vector caching.
 
 ---
 
 ## 🏗️ System Architecture
-
-The platform follows a clean, decoupled 5-tier architecture that separates presentation, orchestration, agent intelligence, multi-model routing, and persistent storage.
 
 ```mermaid
 flowchart TD
     USER(["User submits Research Query"])
     USER --> API
 
-    subgraph T1 ["Tier 1 - Presentation  -  Next.js 14 App Router"]
-        DASH["Research Dashboard and Prompt Console"]
-        SSE["SSE Stream Reader  -  EventSource / Fetch"]
-        CITE["Citation Hover Preview  -  Favicons and URLs"]
-        EXP["Export Engine  -  PDF / Markdown / Print"]
-        HIST["Session History and URL Deep Linking"]
+    subgraph T1 ["Tier 1 — Presentation — Next.js 14 App Router"]
+        DASH["Research Dashboard + Prompt Console"]
+        SSE["SSE Stream Reader — EventSource / Fetch"]
+        CITE["Citation Hover Preview — Favicons + URLs"]
+        EXP["Export Engine — PDF / Markdown / Print"]
+        HIST["Session History + URL Deep Linking"]
     end
 
-    subgraph T2 ["Tier 2 - API and Orchestration  -  FastAPI + AsyncIO"]
-        API["API Gateway  -  POST /api/research/stream"]
-        JOB["ActiveJob Pub-Sub  -  Decoupled Background Task"]
-        SVC["ResearchService Orchestrator"]
-        VCACHE["Semantic Vector Cache  -  Upstash  -  Cosine 88pct"]
+    subgraph T2 ["Tier 2 — Distributed Orchestration (FastAPI + ARQ)"]
+        API["API Gateway — POST /api/research/stream"]
+        PUBSUB["Redis Pub/Sub Channel (session_id:events)"]
+        WORKER["ARQ Background Worker Process"]
+        VCACHE["Semantic Vector Cache — FAISS CPU"]
     end
 
-    subgraph T3 ["Tier 3 - Autonomous 5-Stage Agent Swarm"]
-        A1["1. Planner Agent\nQuery validation and subtask decomposition\nEffort tier: low / medium / high"]
-        A2["2. Research Agent\nParallel Tavily web searches\nBM25 lexical + 768d dense vector RAG"]
-        A3["3. Verification Agent\nNLI entailment scoring 0.0 to 1.0\nVerbatim source quote extraction"]
-        A4["4. Report Writer\nGFM Markdown with inline citations\nReal-time SSE token streaming"]
-        A5["5. Critic Agent\nEditor-in-chief quality review\nScore threshold 8.0 out of 10"]
+    subgraph T3 ["Tier 3 — LangGraph Durable State Machine"]
+        A1["1. Planner Node
+Query decomposition + dynamic report outline"]
+        A2["2. Research Node
+Parallel web search + Hybrid RRF retrieval"]
+        A3["3. Verification Node
+LLM claim verification score + source quotes"]
+        A4["4. Writer Node
+GFM Markdown + inline citations
+Real-time SSE token streaming"]
+        A5["5. Critic Node
+Editor-in-chief quality review
+Conditional Edge: should_rewrite"]
     end
 
-    subgraph T4 ["Tier 4 - Resilient Multi-Model LLM Fallback Chain"]
-        L1["Primary  -  Gemma 4 and Gemini 3.7 Flash"]
-        L2["Secondary  -  Gemini 3.5 Flash"]
-        L3["Tertiary  -  Groq gpt-oss-120b"]
-        L1 -.->|"429 Rate Limit"| L2
+    subgraph T4 ["Tier 4 — Resilient Multi-Model LLM Fallback Chain"]
+        MM["Memori SDK — Agent Memory"]
+        L1["Primary — Gemma 4 + Gemini 3.7 Flash"]
+        L2["Secondary — Gemini 3.5 Flash"]
+        L3["Tertiary — Groq gpt-oss-120b"]
+        L1 -.->|"429 / Rate Limit"| L2
         L2 -.->|"Quota Exhausted"| L3
+        MM ---|"Wraps LLM Clients"| L1
     end
 
-    subgraph T5 ["Tier 5 - Persistence Memory and External Intelligence"]
-        PG[("PostgreSQL - asyncpg - Primary")]
-        SQ[("SQLite dev.db - 4s Auto-Failover")]
-        RD[("Upstash Redis - Vector Cache")]
-        MM[("Memori SDK - Knowledge Graph")]
+    subgraph T5 ["Tier 5 — Persistence + External Intelligence"]
+        PG[("PostgreSQL — asyncpg + Connection Pooling")]
+        RD[("Redis — Pub/Sub, Queue, Cache")]
         TV["Tavily Web Intelligence API"]
-        PG -.->|"DB Unreachable"| SQ
+        DDG["DuckDuckGo Fallback Search"]
     end
 
     USER --> DASH
     DASH --> SSE
-    SSE <-->|"text/event-stream"| API
+    SSE <-->|"Subscribe text/event-stream"| API
 
-    API --> JOB --> SVC
-    SVC <--> VCACHE
-    VCACHE <--> RD
+    API -->|"Enqueue Job"| RD
+    RD -->|"De-queue Job"| WORKER
+    API <-->|"Subscribe / Publish"| PUBSUB
+    WORKER -->|"Publish Events"| PUBSUB
 
-    SVC -->|"Cache MISS - run pipeline"| A1
-    SVC -->|"Cache HIT - return instantly"| USER
-
+    WORKER -->|"Execute StateGraph"| A1
     A1 -->|"Subtask list"| A2
-    A2 -->|"Findings and sources"| A3
+    A2 -->|"Findings + sources"| A3
     A3 -->|"Verified claims"| A4
     A4 -->|"Draft report"| A5
-    A5 -->|"Score below 8.0 - Revision feedback"| A4
-    A5 -->|"Score 8.0 plus - Approved"| SVC
+    A5 -->|"Rewrite / Feedback"| A4
+    A5 -->|"Approved (END)"| WORKER
 
     A2 --> TV
-    A4 <--> MM
+    A2 -.->|"Tavily fails"| DDG
     A1 & A2 & A3 & A4 & A5 --> L1
 
-    SVC --> PG
-    SVC -.->|"Failover"| SQ
     MM --> PG
 ```
 
 ---
 
-## 🔍 Architecture Deep Dive & Data Flow
-
-To understand how high-throughput, multi-agent intelligence is generated, let us examine the responsibilities and interaction mechanics of each architectural layer:
-
-### 1. Presentation Tier (Next.js 14 App Router)
-The frontend provides a real-time, reactive research workspace. When a researcher submits a query, the client opens an asynchronous `EventSource` / `fetch` readable stream connected to `POST /api/research/stream`. The UI uses Framer Motion to update the 5-stage agent stepper, renders live Tavily search queries in an expandable subtask feed, displays interactive citation badges with rich domain favicons and source previews, and renders streaming Markdown tokens as they are generated. A client-side export engine converts synthesized reports into sanitized Markdown or vector-accurate PDFs via `html2canvas` + `jsPDF`.
-
-### 2. API & Orchestration Tier (FastAPI + AsyncIO)
-The backend routes incoming requests through `app/api/research_routes.py`. Execution is managed by `ResearchService` via an in-memory, thread-safe `ActiveJob` pub-sub event loop. Long-running research tasks execute as detached `asyncio.Task` background jobs. This decouples the research workflow from transient HTTP connections: if a user refreshes the page or experiences a network drop, reconnecting immediately resynchronizes their view with the active job state without re-running searches or restarting the pipeline.
-
-### 3. Autonomous 5-Stage Agent Swarm
-The core intelligence engine operates as a sequential and concurrent agent pipeline:
-- **Planner Agent (`app/agents/planner.py`)**: Performs semantic validation on the query (rejecting queries < 5 characters) and decomposes the research topic into prioritized, non-overlapping subtasks based on the chosen effort tier (`low`, `medium`, `high`).
-- **Research Agent (`app/agents/researcher.py`)**: Dispatches parallel web search workers via Tavily. Scraped content is cleaned, recursively chunked into 1,000-character segments, and evaluated using **Hybrid BM25 + Dense Vector RAG** (combining `rank-bm25` lexical keyword scores with 768-dimensional `gemini-embedding-001` dense embeddings). Subtask findings are cached in Upstash Redis with a 24-hour TTL.
-- **Verification Agent (`app/agents/verifier.py`)**: Acts as a strict fact-checker. It extracts atomic factual assertions from research findings and evaluates them against raw source context using Natural Language Inference (NLI) prompts. Each claim is assigned an entailment score (0.0 to 1.0) and paired with an exact verbatim quote from the source text.
-- **Report Writer Agent (`app/agents/report_writer.py`)**: Synthesizes verified findings into clean GitHub Flavored Markdown (GFM) with Markdown tables and numbered inline citations `[1]`, `[2]`. It streams tokens directly to the client in real-time.
-- **Critic Agent (`app/agents/critic.py`)**: Acts as Editor-in-Chief. It evaluates the synthesized draft against the original prompt for completeness, structural clarity, and citation density. If the report scores below 8.0/10, the Critic issues actionable revision directives that trigger an automated rewrite loop in the Writer (up to 2 iterations).
-
-### 4. Resilient Multi-Model LLM Routing Chain
-The `MultiModelLLMClient` (`app/clients/llm_client.py`) prevents pipeline failures by implementing an automatic fallback hierarchy. Primary requests route to **Google Gemma 4 (31B/26B)** or **Gemini 3.7 Flash**. If an upstream provider returns a `429 Rate Limit` or `503 Service Unavailable`, requests seamlessly fail over to **Gemini 3.5 Flash**, and subsequently to **Groq Cloud (openai/gpt-oss-120b)**, ensuring active research tasks never terminate prematurely.
-
-### 5. Persistence, Memory & External Intelligence Tier
-- **Dual-Storage Relational Engine**: Relational records, conversation turns, and complete dossiers are persisted in PostgreSQL via `asyncpg`. If PostgreSQL credentials are unconfigured or the server fails to respond within 4 seconds, the system automatically falls back to an embedded SQLite database (`sqlite_dbs/dev.db`).
-- **Semantic Vector Cache**: Queries are embedded into 768-dimensional vectors and evaluated against Upstash Redis using cosine similarity. If similarity is **≥ 88%**, the complete pre-computed dossier is returned in under 200 milliseconds.
-- **Agent Memory**: Integrated with the **Memori SDK** to maintain entity knowledge graphs across multi-turn research conversations.
-
----
-
-
-## 🔬 How the Agent Pipeline Works
+## 🔬 Agent Pipeline Deep Dive
 
 ```mermaid
 sequenceDiagram
@@ -154,197 +125,307 @@ sequenceDiagram
     participant UI as Next.js Dashboard
     participant API as FastAPI
     participant Cache as Semantic Cache
-    participant Agents as 5-Stage Agent Swarm
-    participant LLM as LLM Chain
-    participant DB as PostgreSQL / SQLite
+    participant Agents as 5-Stage Agent Pipeline
+    participant LLM as LLM Fallback Chain
+    participant DB as PostgreSQL
 
     User->>UI: Submit query + effort tier
     UI->>API: POST /api/research/stream
-    API->>Cache: Check query vector (cosine similarity)
+    API->>Cache: Check query vector (cosine ≥ 88%)
 
-    alt Cache HIT (similarity >= 88%)
+    alt Cache HIT
         Cache-->>UI: Stream cached dossier instantly
     else Cache MISS
         API->>Agents: Run pipeline
-        Note over Agents: 1. Planner - Decompose into subtasks
-        Note over Agents: 2. Researcher - Tavily search + BM25 / dense RAG
-        Note over Agents: 3. Verifier - NLI entailment scoring per claim
-        Note over Agents: 4. Writer - GFM report + inline citations [n]
-        Note over Agents: 5. Critic - Score report, revise if below 8.0/10
-        Agents->>LLM: LLM calls (with automatic fallback chain)
-        LLM-->>Agents: Model responses
-        Agents-->>UI: Stream findings + report tokens via SSE
-        Agents->>DB: Persist session and dossier
-        Agents->>Cache: Store query vector for future hits
+        Note over Agents: 1. Planner — Decompose into subtasks + outline
+        Note over Agents: 2. Researcher — Parallel web search + Hybrid BM25 + Dense RRF retrieval
+        Note over Agents: 3. Verifier — LLM claim verification with source quote extraction
+        Note over Agents: 4. Writer — GFM report + inline citations [n]
+        Note over Agents: 5. Critic — Quality review, rewrite if needed
+        Agents->>LLM: LLM calls (automatic fallback on 429/503)
+        Agents-->>API: Stream chunks (via Redis Pub/Sub)
+        API-->>UI: Yield SSE token
     end
 
-    UI-->>User: Final dossier - Report, Citations, Verifications
+    UI-->>User: Final dossier with citations, verifications, cost metrics
 ```
+
+### Agent Responsibilities
+
+| Agent | File | Role |
+|:---|:---|:---|
+| **Planner** | `app/agents/planner.py` | Decomposes query into prioritized subtasks and generates a dynamic, domain-specific report outline tailored to the subject matter |
+| **Researcher** | `app/agents/researcher.py` | Dispatches parallel web searches via Tavily (+ DuckDuckGo fallback). Cleans and chunks scraped content, then ranks passages with **Hybrid BM25 + Dense Vector RAG** — BM25 lexical scores fused with Gemini embedding cosine similarity via Reciprocal Rank Fusion (RRF). Falls back to BM25-only if the embedding API is unavailable. |
+| **Verifier** | `app/agents/verifier.py` | LLM-based claim verifier. Evaluates each claim against raw source context, assigns an entailment score (0.0–1.0), and extracts verbatim supporting quotes. Unverified claims are flagged to the writer |
+| **Writer** | `app/agents/report_writer.py` | Synthesizes verified findings into GitHub Flavored Markdown with inline citations `[1]`, `[2]`. Streams tokens to frontend in real-time |
+| **Critic** | `app/agents/critic.py` | Editor-in-Chief quality gate. Evaluates completeness, citation density, and outline coverage. Triggers automated rewrite loop if report is insufficient |
 
 ---
 
-## Effort Tiers & Depth Calibration
+## 🏗️ System Design & Interview Trade-Offs
 
-The platform exposes three research tiers that let you trade off analytical depth against latency and API credit usage. Select the tier that matches the complexity of your query.
+When scaling this system, several key architectural decisions were made to prioritize reliability, cost-control, and horizontal scaling over pure theoretical autonomy:
 
-| Tier | Subtasks | Search Depth | Recursive Analysis | Verification | Latency |
-|:---|:---:|:---:|:---:|:---:|:---:|
-| **Low** | 1 – 2 | Basic | No | Core claim check | 15 – 30 s |
-| **Medium** | 2 – 4 | Advanced | No | Full NLI entailment | 45 – 75 s |
-| **High** | 4 – 7 | Multi-query | Yes (Depth-2) | Strict quote extraction | 90 – 180 s |
+1.  **Why a LangGraph State Machine over a Pure ReAct Agent?**
+    *   *Trade-off:* A pure ReAct agent (Tool Node + LLM loop) can dynamically choose from a massive registry of tools, but it is notoriously prone to infinite loops and massive token bloat when reasoning breaks down. 
+    *   *Decision:* We use a **Flow Engineering** approach (LangGraph `StateGraph`). The high-level path is deterministic (Plan → Research → Verify → Write), ensuring predictable latency and bounded LLM costs. The *dynamism* is explicitly constrained to the Critic's conditional feedback loop (`should_rewrite`), providing the perfect balance of autonomous self-correction and production stability.
 
-**Low** — Quick factual lookups, concept definitions, and brief executive summaries. Minimal API usage.
+2.  **Why ARQ & Redis Pub/Sub instead of In-Memory Async Tasks?**
+    *   *Trade-off:* Python `asyncio` tasks with in-memory queues are easy to build but fail instantly if the web server process restarts, dropping all active user sessions.
+    *   *Decision:* We fully decoupled the API gateway from task execution. The FastAPI endpoint enqueues a job into an **ARQ** Redis queue. A separate worker process pulls the job, executes the LangGraph state machine, and streams events back to a **Redis Pub/Sub** channel. The FastAPI server simply subscribes to this channel. You can scale the web servers and the LLM workers completely independently.
 
-**Medium** — Market research, competitive analysis, and technical overviews. Balanced depth and speed.
-
-**High** — Academic literature reviews, thesis-level research, and deep technical due diligence. Recursive gap analysis runs a second pass to fill coverage holes identified in the first round.
+3.  **Why Reciprocal Rank Fusion (RRF) for Verification?**
+    *   *Trade-off:* Relying solely on Vector/Semantic search can miss exact keyword matches (e.g., specific model numbers or names), while BM25 misses semantic intent.
+    *   *Decision:* The Verification node runs both BM25 and Dense Vector embeddings in parallel, fusing the results via RRF. This ensures the strictest possible verification tagging—if a claim isn't grounded in the hybrid retrieved context, it is explicitly flagged as `[UNVERIFIED]`.
 
 ---
 
-## Environment Variables
+## 🚀 Engineering Highlights
 
-Copy `backend/.env.sample` to `backend/.env` and fill in the values.
+### Fault-Tolerant Parallel Workers
+Individual subtask failures don't crash the pipeline. Failed workers produce empty-source findings with explicit failure messages, ensuring the remaining research completes and unverified claims are clearly flagged in the report.
 
-```bash
-# https://console.aiven.io/
-DB_USER=
-DB_PASSWORD=
-DB_HOST=
-DB_PORT=
-DB_NAME=
-SSL_MODE=require
+### Multi-Model LLM Fallback with 429 Retry
+Requests route through Gemma 4 → Gemini 3.7 Flash → Gemini 3.5 Flash → Groq. On `429 Rate Limit` or `RESOURCE_EXHAUSTED`, exponential backoff retries up to 3 attempts before failing over to the next provider.
 
-# Tavily API Key, get it from https://app.tavily.com/home
-TAVILY_API_KEY=
+### Exact Provider-Reported Token Metering
+Token counts come directly from Google GenAI `response.usage_metadata` and Groq `response.usage` — **zero heuristic estimation**. Cost is calculated using official per-model pricing rates via a `contextvars.ContextVar` callback that accumulates usage across all pipeline stages.
 
-# Groq API Key, get it from https://console.groq.com/keys
-GROQ_API_KEY=
+### Semantic Vector Cache
+Queries are embedded and evaluated against Upstash Redis + FAISS using cosine similarity. Queries with **≥ 88% similarity** return pre-computed dossiers without re-running the full pipeline. The FAISS index is maintained in-memory with a single cold-start load from Redis; subsequent lookups are pure in-memory vector search.
 
-# Google API Key, get it from https://aistudio.google.com/api-keys
-GEMINI_API_KEY=
+### Hybrid BM25 + Dense Retrieval
+Within each research subtask, scraped page content is split into 500-char overlapping chunks. Each chunk is scored by both **BM25** (lexical keyword overlap) and **Gemini dense embeddings** (semantic cosine similarity). The two rank lists are fused with **Reciprocal Rank Fusion (RRF, k=60)** to select the top-3 passages passed to the LLM synthesiser. If the embedding API is rate-limited, the pipeline degrades gracefully to BM25-only without interrupting research.
 
-# Memori API Key, get it from https://app.memorilabs.ai/api-keys
-MEMORI_API_KEY=
+### SSRF-Hardened URL Fetching
+All outbound URL requests are validated against RFC 1918 private ranges, loopback addresses, link-local, and cloud metadata endpoints (AWS `169.254.169.254`, GCP `metadata.google.internal`).
 
-# Upstash Redis URL, get it from https://console.upstash.com/redis
-REDIS_URL=
+### Database Connection Pooling
+PostgreSQL connections use SQLAlchemy async pooling (`pool_size=10`, `max_overflow=20`, `pool_recycle=1800`, `pool_pre_ping=True`) for high-throughput concurrent research sessions.
 
-# Google OAuth Client ID, get it from https://console.cloud.google.com/apis/credentials
-GOOGLE_CLIENT_ID=
+### Rate Limiting
+Per-user and per-IP request throttling via Redis-backed sliding window counters with in-memory fallback when Redis is unavailable.
 
-# JWT Secret Key (Optional)
-JWT_SECRET_KEY=
-```
+### Groundedness Score
+Computed from LLM entailment scores across all verified claims. Unverified claims (score 0.0) are flagged to the writer with explicit `[UNVERIFIED]` annotations. Displayed as a percentage badge in the frontend alongside token usage and cost metrics.
 
-```bash
-# frontend/.env.local
+### Server-Side PDF Export
+Backend PDF generation via ReportLab with Markdown-to-PDF conversion (tables, headings, citations). Frontend also supports client-side export via `html2canvas` + `jsPDF`.
 
-# Backend API URL
-NEXT_PUBLIC_API_URL=http://localhost:8001
-```
+### Decoupled Background Execution
+Research runs as detached `asyncio.Task` background jobs via the `ActiveJob` pub-sub system. Every SSE event is persisted to PostgreSQL so users can refresh, disconnect, and reconnect — even after a server restart — without losing progress. Multiple clients can subscribe to the same job simultaneously.
 
+### Database Migrations
+Alembic migration scripts for PostgreSQL schema evolution without data loss.
 
+---
+
+## 🎚️ Effort Tiers
+
+| Tier | Subtasks | Search Depth | Gap Analysis | Retrieval | Verification | Typical Latency |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Low** | 1–2 | Basic | No | Hybrid BM25+Dense | Core claim check | 15–30s |
+| **Medium** | 2–4 | Advanced | No | Hybrid BM25+Dense | Full LLM entailment | 45–75s |
+| **High** | 4–7 | Multi-query | Yes (Depth-2) | Hybrid BM25+Dense | Strict quote extraction | 90–180s |
 
 ---
 
 ## ⚡ Quick Start
 
-Get the entire full-stack application running locally in **under two minutes**.
+### 1. Clone
 
-### 1. Clone Repository
 ```bash
 git clone https://github.com/LaxmiNarayana31/agentic-research-engine.git
 cd agentic-research-engine
 ```
 
-### 2. Backend Setup
+### 2. Backend
+
 ```bash
 cd backend
-
-# Create virtual environment and install dependencies
 uv venv
-# On Windows: .venv\Scripts\activate | On Linux/macOS: source .venv/bin/activate
 uv sync
 
-# Configure environment variables
+# Configure environment
 cp .env.sample .env
+# Fill in API keys (see Environment Variables below)
+
+# Start server
+uv run uvicorn main:app --port 8001 --reload
 ```
 
-Fill in your API keys in `backend/.env` — see the [Environment Variables](#environment-variables) section above for all keys and their source URLs.
+### 3. Frontend
 
-### 3. Frontend Setup
-In a separate terminal:
 ```bash
 cd frontend
 npm install
-```
-
-### 4. Launch Development Servers
-```bash
-# Terminal 1: Backend (Port 8001)
-cd backend
-uv run uvicorn main:app --port 8001 --reload
-
-# Terminal 2: Frontend (Port 3001)
-cd frontend
 npm run dev
 ```
 
-Navigate to **`http://localhost:3001`** in your browser. Interactive OpenAPI documentation is accessible at **`http://localhost:8001/docs`**.
+Open **http://localhost:3001** — API docs at **http://localhost:8001/docs**.
 
+### 4. Docker Compose (Alternative)
 
+```bash
+# Copy .env to backend/.env with your API keys first
+docker compose up --build
+```
 
-
-## 📡 API Reference
-
-All research routes are mounted under the `/api/research` prefix:
-
-| Method | Endpoint | Description |
-|:---:|:---|:---|
-| `POST` | `/api/research/stream` | **Primary SSE Endpoint**. Runs full 5-stage research pipeline and streams tokens, findings, and verifications live. |
-| `POST` | `/api/research` | **Synchronous Pipeline**. Executes the entire workflow and returns a complete `ResearchPipelineResponse` JSON payload. |
-| `POST` | `/api/research/planner` | **Planner Only**. Decomposes and validates a query into subtasks without executing web searches. |
-| `GET` | `/api/research/stream/{session_id}/subscribe` | **Stream Resumption**. Reconnects to an active or past research session to stream state changes. |
-| `GET` | `/api/research/history` | **Session Index**. Retrieves a list of all past research sessions and their completion metadata. |
-| `GET` | `/api/research/history/{session_id}` | **Session Detail**. Retrieves full findings, verifications, and reports for a specific UUID. |
-| `DELETE` | `/api/research/history/{session_id}` | **Session Deletion**. Deletes a research record and its associated history. |
-| `GET` | `/api/research/suggestions` | **Topic Suggestions**. Generates dynamic, trending research topics using LLM reasoning. |
-| `GET` | `/health` | **Health Check**. Returns server uptime and timestamp. |
+This starts Redis, backend (port 8001), and frontend (port 3001) with health checks and automatic dependency ordering.
 
 ---
 
-## 🧪 Testing & CI/CD
+## 🔐 Environment Variables
 
-Run the automated test suite with `pytest`:
+### Backend (`backend/.env`)
+
+```bash
+# PostgreSQL (https://console.aiven.io)
+DB_USER=
+DB_PASSWORD=
+DB_HOST=
+DB_PORT=5432
+DB_NAME=
+SSL_MODE=require
+
+# Tavily Search (https://app.tavily.com/home)
+TAVILY_API_KEY=
+
+# Groq LLM (https://console.groq.com/keys)
+GROQ_API_KEY=
+
+# Google Gemini (https://aistudio.google.com/apikey)
+GEMINI_API_KEY=
+
+# Memori Agent Memory (https://app.memorilabs.ai/api-keys)
+MEMORI_API_KEY=
+
+# Upstash Redis (https://console.upstash.com/redis)
+REDIS_URL=
+
+# Google OAuth (https://console.cloud.google.com/apis/credentials)
+GOOGLE_CLIENT_ID=
+
+# JWT Secret — REQUIRED (min 32 chars)
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+JWT_SECRET_KEY=
+
+# CORS — comma-separated trusted frontend origins
+# Example: ALLOWED_ORIGINS=http://localhost:3001,https://yourdomain.com
+ALLOWED_ORIGINS=http://localhost:3001
+```
+
+### Frontend (`frontend/.env.local`)
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8001
+```
+
+---
+
+## 📡 API Reference
+
+### Research Endpoints (`/api/research`)
+
+| Method | Endpoint | Description |
+|:---:|:---|:---|
+| `POST` | `/stream` | Primary SSE endpoint. Runs full 5-stage pipeline with real-time streaming |
+| `POST` | `/chat/stream` | Lightweight conversational chat mode (direct LLM response) |
+| `POST` | `/` | Synchronous pipeline. Returns complete `ResearchPipelineResponse` JSON |
+| `POST` | `/planner` | Planner-only. Decomposes query into subtasks without executing searches |
+| `GET` | `/stream/{session_id}/subscribe` | Reconnect to an active or past research session |
+| `POST` | `/{session_id}/cancel` | Cancel an active research job |
+| `GET` | `/history` | List past research sessions |
+| `GET` | `/history/{session_id}` | Full session detail with findings, verifications, and report |
+| `DELETE` | `/history/{session_id}` | Delete a research session |
+| `GET` | `/{session_id}/export/pdf` | Export session report as PDF |
+| `GET` | `/suggestions` | Dynamic trending research topic suggestions via LLM |
+
+### Auth Endpoints (`/api/auth`)
+
+| Method | Endpoint | Description |
+|:---:|:---|:---|
+| `POST` | `/signup` | Email/password registration |
+| `POST` | `/login` | Email/password authentication |
+| `POST` | `/google` | Google OAuth sign-in |
+| `POST` | `/refresh` | Refresh JWT token |
+| `GET` | `/me` | Current user profile |
+| `GET` | `/config` | Auth configuration (Google Client ID) |
+| `GET` | `/workspaces` | List user workspaces |
+| `POST` | `/workspaces` | Create new workspace |
+| `GET` | `/usage` | User usage statistics |
+
+### Health
+
+| Method | Endpoint | Description |
+|:---:|:---|:---|
+| `GET` | `/health` | Server uptime and timestamp |
+
+---
+
+## 🧪 Testing
 
 ```bash
 cd backend
 uv run pytest -v
 ```
 
-The repository includes a comprehensive GitHub Actions CI/CD workflow (`.github/workflows/ci.yml`) that validates:
-1. **Backend Tests**: Executes `pytest` across DTO models, health endpoints, and cosine similarity vector math.
-2. **Frontend Linter & Build**: Runs ESLint and performs Next.js production build verification on Node.js 20.
+**Test suites:**
+
+| Suite | Coverage |
+|:---|:---|
+| `test_performance_and_resilience.py` | Fault-tolerant workers, connection pooling, 429 retry, SSRF guard, groundedness score, exact token metering |
+| `test_cancellation_and_search_resilience.py` | Job cancellation, search provider failover |
+| `test_multi_tenancy.py` | User/tenant isolation, workspace scoping |
+| `test_pdf_and_stream_resilience.py` | PDF export, SSE stream resilience |
+| `test_auth.py` | JWT auth, Google OAuth, token refresh |
+| `test_dtos.py` | Pydantic model validation |
+| `test_rate_limiter.py` | Rate limiting guard |
+| `test_semantic_cache.py` | Vector cosine similarity |
+| `test_health.py` | Health endpoint |
+
+GitHub Actions CI/CD (`.github/workflows/ci.yml`) runs backend `pytest` and frontend `next build` on every push.
 
 ---
 
-## 🛣️ Roadmap
+## 📂 Project Structure
 
-- [ ] **Docker & Docker Compose**: Single-command container deployment for backend, frontend, and PostgreSQL.
-- [ ] **Expanded Search Providers**: Pluggable integrations for Brave Search, Exa.ai, and self-hosted SearXNG.
-- [ ] **Direct Notion & Google Docs Export**: Sync finalized intelligence dossiers directly to team knowledge bases.
-- [ ] **Audio Briefing Mode**: Autonomous generation of 2-minute spoken research summaries via text-to-speech models.
-- [ ] **Custom Agent Evaluation Benchmarks**: Automated scoring of research depth against human analyst baselines.
+```
+├── backend/
+│   ├── app/
+│   │   ├── agents/          # Planner, Researcher, Verifier, Writer, Critic
+│   │   ├── api/             # FastAPI route handlers (research + auth)
+│   │   ├── clients/         # MultiModelLLMClient with fallback chain
+│   │   ├── core/            # Config, logging, error handling
+│   │   ├── db/              # SQLAlchemy async engine + connection pooling
+│   │   ├── dtos/            # Pydantic request/response schemas
+│   │   ├── helpers/         # Auth helpers, utilities
+│   │   ├── models/          # SQLAlchemy ORM models
+│   │   └── services/        # ResearchService, SemanticCache, RateLimiter, PDF Export
+│   ├── alembic/             # Database migrations
+│   ├── tests/               # pytest test suites
+│   ├── main.py              # FastAPI application entrypoint
+│   ├── Dockerfile
+│   └── pyproject.toml
+├── frontend/
+│   ├── app/
+│   │   ├── components/      # React components (ChatTurnView, SourceGrid, etc.)
+│   │   ├── types/           # TypeScript interfaces
+│   │   ├── utils/           # Citation processing, helpers
+│   │   └── page.tsx         # Main research dashboard
+│   ├── Dockerfile
+│   └── package.json
+├── docker-compose.yml        # Full-stack containerized deployment
+└── README.md
+```
 
 ---
 
 ## 🤝 Contributing
 
-Contributions make the open-source community an incredible place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
-
 1. Fork the Project
 2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+3. Commit your Changes (`git commit -m 'Add AmazingFeature'`)
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
@@ -352,6 +433,4 @@ Contributions make the open-source community an incredible place to learn, inspi
 
 ## 📄 License
 
-Distributed under the **MIT License**. See `LICENSE` for more information.
-
----
+Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
