@@ -26,6 +26,7 @@ htmlcov/
 *.duckdb*
 sqlite_dbs/
 .qdrant_storage/
+versions/
 
 # Logging
 logs/
