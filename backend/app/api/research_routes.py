@@ -2,9 +2,11 @@ from datetime import datetime
 import re
 from typing import Optional
 from fastapi import APIRouter, Depends, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.database import get_db
 from fastapi.responses import StreamingResponse
 
-from app.helpers.auth_helper import get_optional_user
+from app.helpers.auth_helper import get_optional_user, get_user_tenant_id
 from app.core.errors import AppException
 from app.core.logging import logger
 from app.dtos.api_dto import ErrorResponse, ResearchPipelineRequest, ResearchPipelineResponse
@@ -101,13 +103,15 @@ async def run_research_pipeline(
     req: ResearchPipelineRequest,
     request: Request,
     response: Response,
-    user: Optional[User] = Depends(get_optional_user)
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Execute end-to-end multi-agent pipeline with user scoping and rate limit protection."""
     await rate_limit_guard(request, response, user)
     try:
         user_id = user.id if user else None
-        return await research_service.run_pipeline_sync(req.query, req.effort_level, req.previous_session_id, user_id=user_id)
+        tenant_id = await get_user_tenant_id(user, db)
+        return await research_service.run_pipeline_sync(req.query, req.effort_level, req.previous_session_id, user_id=user_id, tenant_id=tenant_id)
     except ValueError as e:
         raise AppException(code="INVALID_QUERY", message=str(e), status_code=400)
     except Exception as e:
@@ -119,13 +123,15 @@ async def stream_research_pipeline(
     req: ResearchPipelineRequest,
     request: Request,
     response: Response,
-    user: Optional[User] = Depends(get_optional_user)
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Execute multi-agent pipeline or fast conversational chat in background and stream results live using SSE."""
     await rate_limit_guard(request, response, user)
     try:
         user_id = user.id if user else None
-        
+        tenant_id = await get_user_tenant_id(user, db)
+
         # Check if chat mode is requested or if query is a casual greeting
         q_clean = req.query.strip().lower()
         is_greeting = q_clean in [
@@ -134,31 +140,33 @@ async def stream_research_pipeline(
             "how are you", "how are you?", "who are you", "who are you?"
         ]
         is_chat_mode = (
-            req.mode == "chat" or 
-            req.effort_level == "chat" or 
+            req.mode == "chat" or
+            req.effort_level == "chat" or
             q_clean.startswith("/chat") or
             is_greeting
         )
-        
+
         if is_chat_mode:
             return StreamingResponse(
                 research_service.stream_chat_pipeline(
                     req.query,
                     previous_session_id=req.previous_session_id,
                     session_id=req.session_id,
-                    user_id=user_id
+                    user_id=user_id,
+                    tenant_id=tenant_id
                 ),
                 media_type="text/event-stream"
             )
 
         return StreamingResponse(
             research_service.stream_pipeline(
-                req.query, 
-                req.effort_level, 
-                req.previous_session_id, 
+                req.query,
+                req.effort_level,
+                req.previous_session_id,
                 req.session_id,
-                user_id=user_id
-            ), 
+                user_id=user_id,
+                tenant_id=tenant_id
+            ),
             media_type="text/event-stream"
         )
     except Exception as e:
@@ -170,18 +178,21 @@ async def stream_chat_endpoint(
     req: ResearchPipelineRequest,
     request: Request,
     response: Response,
-    user: Optional[User] = Depends(get_optional_user)
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Direct fast streaming chat endpoint against research dossiers."""
     await rate_limit_guard(request, response, user)
     try:
         user_id = user.id if user else None
+        tenant_id = await get_user_tenant_id(user, db)
         return StreamingResponse(
             research_service.stream_chat_pipeline(
                 req.query,
                 previous_session_id=req.previous_session_id,
                 session_id=req.session_id,
-                user_id=user_id
+                user_id=user_id,
+                tenant_id=tenant_id
             ),
             media_type="text/event-stream"
         )
@@ -222,12 +233,14 @@ async def subscribe_research_stream(
 @router.post("/{session_id}/cancel", tags=["Orchestration"])
 async def cancel_research_session(
     session_id: str,
-    user: Optional[User] = Depends(get_optional_user)
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Cancel an active or pending background research job."""
     try:
         user_id = user.id if user else None
-        res = await research_service.cancel_job(session_id, user_id=user_id)
+        tenant_id = await get_user_tenant_id(user, db)
+        res = await research_service.cancel_job(session_id, user_id=user_id, tenant_id=tenant_id)
         if not res.get("success"):
             if "unauthorized" in res.get("message", "").lower():
                 raise AppException(code="FORBIDDEN", message=res.get("message"), status_code=403)

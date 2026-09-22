@@ -1,6 +1,7 @@
 import textwrap
 
 from typing import List, Optional, Any
+
 from app.clients.llm_client import MultiModelLLMClient
 from app.core.logging import logger
 from app.dtos.report_dto import FinalReport

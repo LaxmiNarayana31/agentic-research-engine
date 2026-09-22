@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -8,9 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import uvicorn
 
+import uuid
+from starlette.requests import Request
+from starlette.responses import Response
+
 from app.api.auth_routes import router as auth_router
 from app.api.research_routes import router as research_router
 from app.clients.llm_client import _mem
+from app.core.config import settings
 from app.core.errors import (
     AppException,
     app_exception_handler,
@@ -18,7 +24,7 @@ from app.core.errors import (
     http_exception_handler,
     validation_exception_handler,
 )
-from app.core.logging import logger, setup_logging
+from app.core.logging import logger, request_id_cv, setup_logging
 from app.db.database import init_db
 
 load_dotenv(override=True)
@@ -26,6 +32,14 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Enforce JWT secret strength before accepting any traffic
+    try:
+        settings.validate_jwt_secret()
+        logger.info("JWT secret key validation passed.")
+    except ValueError as e:
+        logger.critical(str(e))
+        raise SystemExit(1)
+
     # Initialize application relational tables on PostgreSQL
     try:
         db_type = await init_db()
@@ -50,12 +64,33 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    req_id = request.headers.get("X-Request-ID") or f"req_{uuid.uuid4().hex[:10]}"
+    token = request_id_cv.set(req_id)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        return response
+    finally:
+        request_id_cv.reset(token)
+
+
+# CORS: read allowed origins from ALLOWED_ORIGINS env var (comma-separated).
+# Falls back to localhost dev origins only — never wildcard with credentials.
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
+_allowed_origins: list[str] = (
+    [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    if _raw_origins.strip()
+    else ["http://localhost:3000", "http://127.0.0.1:3000"]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Last-Event-ID"],
 )
 
 app.add_exception_handler(AppException, app_exception_handler)

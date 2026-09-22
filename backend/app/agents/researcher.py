@@ -16,7 +16,6 @@ from rank_bm25 import BM25Okapi
 
 from app.clients.llm_client import MultiModelLLMClient
 from app.core.config import settings
-from app.core.errors import EmbeddingRateLimitError
 from app.core.logging import logger
 from app.dtos.planner_dto import PlannerSubTask
 from app.dtos.researcher_dto import ResearchFinding
@@ -91,30 +90,61 @@ def is_safe_url(url: str) -> bool:
         return False
 
 async def _fetch_page_content(url: str, timeout: float = 3.5) -> str:
-    """Fast async web scraper with SSRF protection extracting readable article text for local RAG."""
+    """Fast async web scraper with SSRF protection extracting readable article text.
+
+    Follows redirects manually so every hop is re-validated by is_safe_url before
+    the next request is issued.  This prevents open-redirect chains that land on
+    a private/metadata IP that passed the initial check.
+    """
     if not url or not url.startswith("http"):
         return ""
-    
-    # SSRF Guard: block private networks and cloud metadata IPs
+
+    # Pre-flight SSRF check on the initial URL
     if not is_safe_url(url):
         return ""
+
+    MAX_REDIRECTS = 5
+    current_url = url
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         }
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                return ""
-            html = resp.text
-            # Remove scripts, styles, header, footer, nav, noscript, svg
-            html = re.sub(r"<(script|style|header|footer|nav|svg|noscript)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-            # Remove remaining HTML tags
-            text = re.sub(r"<[^>]+>", " ", html)
-            # Normalize whitespace
-            text = re.sub(r"\s+", " ", text).strip()
-            return text[:6000] if len(text) > 6000 else text
+        # follow_redirects=False — we handle each hop manually so we can re-run
+        # is_safe_url on the redirect target before issuing the next request.
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            for _ in range(MAX_REDIRECTS):
+                resp = await client.get(current_url, headers=headers)
+
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location", "")
+                    if not location:
+                        return ""
+                    # Resolve relative redirects against the current URL
+                    if location.startswith("/"):
+                        parsed = urlparse(current_url)
+                        location = f"{parsed.scheme}://{parsed.netloc}{location}"
+                    # Re-validate the redirect target before following it
+                    if not is_safe_url(location):
+                        logger.warning(f"🛡️ SSRF Guard BLOCKED redirect target: {location}")
+                        return ""
+                    current_url = location
+                    continue
+
+                if resp.status_code != 200:
+                    return ""
+
+                html = resp.text
+                # Remove scripts, styles, header, footer, nav, noscript, svg
+                html = re.sub(r"<(script|style|header|footer|nav|svg|noscript)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+                # Remove remaining HTML tags
+                text = re.sub(r"<[^>]+>", " ", html)
+                # Normalize whitespace
+                text = re.sub(r"\s+", " ", text).strip()
+                return text[:6000] if len(text) > 6000 else text
+
+            logger.warning(f"SSRF Guard: too many redirects for {url}")
+            return ""
     except Exception as e:
         logger.debug(f"Article scraper note for {url}: {e}")
         return ""
@@ -213,8 +243,22 @@ class ResearchAgent:
             logger.debug(f"BM25Okapi ranking fallback: {e}")
             return results[:3] if results else []
 
-    async def _local_rag(self, query: str, raw_content: str) -> str:
-        """Hybrid RAG combining native BM25Okapi with dense embedding scoring."""
+    async def _hybrid_rag(self, query: str, raw_content: str) -> str:
+        """Hybrid retrieval: BM25 lexical ranking fused with dense cosine similarity via RRF.
+
+        Pipeline
+        --------
+        1. Split the scraped page into 500-char overlapping chunks.
+        2. Score every chunk with BM25 against the query tokens   → bm25_rank[i]
+        3. Embed all chunks + the query with Gemini Embedding API → dense_rank[i]
+        4. Fuse both rank lists with Reciprocal Rank Fusion (k=60):
+               rrf[i] = 1/(k + bm25_rank[i]) + 1/(k + dense_rank[i])
+        5. Return the top-3 chunks by fused score for the LLM prompt.
+
+        Dense embeddings are obtained in a single batched API call to minimise
+        latency. If the embedding API is unavailable or rate-limited, the method
+        falls back to BM25-only ranking so research continues uninterrupted.
+        """
         try:
             if not raw_content:
                 return ""
@@ -232,37 +276,75 @@ class ResearchAgent:
             if len(chunks) <= 3:
                 return "\n...\n".join(chunks)
 
-            # BM25 Candidate Ranking
+            TOP_K = 3
+            RRF_K = 60  # standard RRF constant
+
+            # ── Step 1: BM25 ranking ──────────────────────────────────────────
             tokenized_chunks = [_tokenize_text(c) for c in chunks]
             bm25 = BM25Okapi(tokenized_chunks)
             tokenized_query = _tokenize_text(query)
             bm25_scores = bm25.get_scores(tokenized_query)
-            bm25_ranked_indices = np.argsort(bm25_scores)[::-1][:10]
-            candidate_chunks = [chunks[i] for i in bm25_ranked_indices]
+            # bm25_rank[i] = rank position of chunk i in BM25 ordering (0 = best)
+            bm25_order = np.argsort(bm25_scores)[::-1]
+            bm25_rank = np.empty(len(chunks), dtype=np.float32)
+            for pos, idx in enumerate(bm25_order):
+                bm25_rank[idx] = pos + 1  # 1-indexed
 
-            # Reciprocal Rank Fusion
-            scored_candidates = []
-            for rank_idx, c_text in enumerate(candidate_chunks):
-                bm25_rank = rank_idx + 1
-                sim = 0.0
-                rrf = (1.0 / (60.0 + bm25_rank)) + (sim * 0.02)
-                scored_candidates.append((rrf, c_text))
+            # ── Step 2: Dense embedding + cosine similarity ───────────────────
+            dense_rank = None
+            try:
+                # Embed all chunks + the query in one batched call
+                all_texts = chunks + [query]
+                all_vecs = await self.llm_client.get_embeddings(all_texts)
+                chunk_vecs = np.array(all_vecs[:-1], dtype=np.float32)
+                query_vec  = np.array(all_vecs[-1],  dtype=np.float32)
 
-            scored_candidates.sort(key=lambda x: x[0], reverse=True)
-            top_chunks = [c for _, c in scored_candidates[:3]]
+                # L2-normalise so dot product == cosine similarity
+                chunk_norms = np.linalg.norm(chunk_vecs, axis=1, keepdims=True)
+                query_norm  = np.linalg.norm(query_vec)
+                # Avoid divide-by-zero
+                chunk_vecs_n = chunk_vecs / np.where(chunk_norms == 0, 1, chunk_norms)
+                query_vec_n  = query_vec  / (query_norm if query_norm > 0 else 1)
+
+                cosine_scores = chunk_vecs_n @ query_vec_n  # shape: (n_chunks,)
+
+                dense_order = np.argsort(cosine_scores)[::-1]
+                dense_rank = np.empty(len(chunks), dtype=np.float32)
+                for pos, idx in enumerate(dense_order):
+                    dense_rank[idx] = pos + 1
+                logger.debug(f"Hybrid RAG: dense embeddings obtained for {len(chunks)} chunks")
+            except Exception as emb_err:
+                logger.warning(f"Hybrid RAG: embedding failed, falling back to BM25-only ({emb_err})")
+
+            # ── Step 3: Reciprocal Rank Fusion ───────────────────────────────
+            if dense_rank is not None:
+                rrf_scores = (
+                    1.0 / (RRF_K + bm25_rank) +
+                    1.0 / (RRF_K + dense_rank)
+                )
+            else:
+                # BM25-only fallback — still works, just single-signal
+                rrf_scores = 1.0 / (RRF_K + bm25_rank)
+
+            top_indices = np.argsort(rrf_scores)[::-1][:TOP_K]
+            # Return chunks in original document order for readability
+            top_indices_sorted = sorted(top_indices.tolist())
+            top_chunks = [chunks[i] for i in top_indices_sorted]
+
+            retrieval_mode = "hybrid BM25+dense RRF" if dense_rank is not None else "BM25-only (dense unavailable)"
+            logger.debug(f"Hybrid RAG: selected {len(top_chunks)} chunks via {retrieval_mode}")
             return "\n...\n".join(top_chunks)
 
-        except (EmbeddingRateLimitError, Exception) as e:
-            logger.debug(f"Local RAG fallback to BM25Okapi: {e}")
+        except Exception as e:
+            logger.warning(f"Hybrid RAG error, falling back to raw content slice: {e}")
             try:
                 if 'chunks' in locals() and chunks:
                     tokenized_chunks = [_tokenize_text(c) for c in chunks]
                     bm25 = BM25Okapi(tokenized_chunks)
-                    tokenized_query = _tokenize_text(query)
-                    scores = bm25.get_scores(tokenized_query)
+                    scores = bm25.get_scores(_tokenize_text(query))
                     top_k = min(3, len(chunks))
                     top_indices = np.argsort(scores)[::-1][:top_k]
-                    return "\n...\n".join([chunks[i] for i in top_indices])
+                    return "\n...\n".join([chunks[i] for i in sorted(top_indices)])
                 return (raw_content or "")[:1500]
             except Exception:
                 return (raw_content or "")[:1500]
@@ -334,11 +416,14 @@ class ResearchAgent:
                             "title": res.get("title", "Source"),
                             "image": img_url
                         })
-                        rag_text = await self._local_rag(task.description, res.get("raw_content") or res.get("content", ""))
+                        rag_text = await self._hybrid_rag(task.description, res.get("raw_content") or res.get("content", ""))
                         results_data["web_search"] += f"Source ({url}):\n{rag_text}\n\n"
                 else:
-                    sources.append("https://search.engine/offline")
-                    results_data["web_search"] = f"Contextual synthesis for '{task.description}'"
+                    # No results from any search engine — record the failure honestly.
+                    # Do NOT add fabricated URLs; leave sources empty so the report
+                    # writer and verifier can treat this finding as unverified.
+                    results_data["web_search"] = ""
+                    logger.warning(f"No search results for subtask {task.task_id}: '{task.description[:60]}' — proceeding with empty evidence.")
 
             prompt = textwrap.dedent(f"""\
                 You are a Researcher. Synthesize the key findings for the following sub-task.
@@ -372,11 +457,11 @@ class ResearchAgent:
             logger.error(f"Top-level exception in execute_subtask: {e}")
             return ResearchFinding(
                 task_id=getattr(task, "task_id", f"subtask_{uuid.uuid4().hex[:8]}"),
-                summary=f"Analyzed key context and findings for {getattr(task, 'description', 'subtask')}.",
+                summary=f"Research failed for '{getattr(task, 'description', 'subtask')}' — no evidence collected.",
                 sources=[],
                 rich_sources=[],
-                raw_data={},
-                used_model="emergency-fallback"
+                raw_data={"error": str(e)},
+                used_model="failed"
             )
 
     async def execute_subtask_stream(self, task: PlannerSubTask):
@@ -471,11 +556,14 @@ class ResearchAgent:
                             "title": res.get("title", "Source"),
                             "image": img_url
                         })
-                        rag_text = await self._local_rag(task.description, res.get("raw_content") or res.get("content", ""))
+                        rag_text = await self._hybrid_rag(task.description, res.get("raw_content") or res.get("content", ""))
                         results_data["web_search"] += f"Source ({url}):\n{rag_text}\n\n"
                 else:
-                    sources.append("https://search.engine/offline")
-                    results_data["web_search"] = f"Contextual synthesis for '{task.description}'"
+                    # No results from any search engine — record the failure honestly.
+                    # Do NOT add fabricated URLs; leave sources empty so the report
+                    # writer and verifier can treat this finding as unverified.
+                    results_data["web_search"] = ""
+                    logger.warning(f"No stream search results for subtask {task.task_id}: '{task.description[:60]}' — proceeding with empty evidence.")
 
             yield {
                 "type": "search_progress", 
@@ -518,10 +606,10 @@ class ResearchAgent:
             logger.error(f"Error in execute_subtask_stream: {top_err}")
             fallback_finding = ResearchFinding(
                 task_id=getattr(task, "task_id", f"subtask_{uuid.uuid4().hex[:8]}"),
-                summary=f"Synthesized preliminary insights for {getattr(task, 'description', 'subtask')}.",
+                summary=f"Research stream failed for '{getattr(task, 'description', 'subtask')}' — no evidence collected.",
                 sources=[],
                 rich_sources=[],
-                raw_data={},
-                used_model="emergency-stream-fallback"
+                raw_data={"error": str(top_err)},
+                used_model="failed"
             )
             yield {"type": "finding", "content": fallback_finding}

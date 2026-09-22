@@ -30,3 +30,6 @@ class ResearchPipelineResponse(BaseModel):
     findings: List[ResearchFinding]
     verifications: List[ClaimVerificationResult]
     report: FinalReport
+    groundedness_score: Optional[float] = 0.0
+    total_tokens: Optional[int] = 0
+    estimated_cost_usd: Optional[float] = 0.0

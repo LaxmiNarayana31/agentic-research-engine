@@ -131,7 +131,7 @@ async def get_rate_limit_usage(
 ):
     """Inspect current rate limit quota and remaining requests."""
     try:
-        return rate_limiter.get_usage_summary(request, user)
+        return await rate_limiter.get_usage_summary(request, user)
     except AppException:
         raise
     except Exception as e:

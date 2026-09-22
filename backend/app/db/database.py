@@ -4,7 +4,6 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import NullPool
 
 from app.core.logging import logger
 
@@ -21,13 +20,32 @@ DB_NAME = os.getenv("DB_NAME", "defaultdb")
 SSL_MODE = os.getenv("SSL_MODE", "")
 
 ssl_param = f"?ssl={SSL_MODE}" if SSL_MODE else ""
-POSTGRES_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}{ssl_param}"
+default_postgres_url = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}{ssl_param}"
 
-# Pure PostgreSQL Engine & Sessionmaker
+raw_db_url = os.getenv("DATABASE_URL")
+if raw_db_url:
+    if raw_db_url.startswith("postgresql://"):
+        POSTGRES_URL = raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    else:
+        POSTGRES_URL = raw_db_url
+else:
+    POSTGRES_URL = default_postgres_url
+
+DATABASE_URL = POSTGRES_URL
+
+# Pure PostgreSQL Engine with High-Performance Connection Pooling
+is_postgres = POSTGRES_URL.startswith("postgresql")
+pool_kwargs = {
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_recycle": 1800,
+    "pool_pre_ping": True,
+} if is_postgres else {}
+
 engine = create_async_engine(
     POSTGRES_URL,
     echo=False,
-    poolclass=NullPool
+    **pool_kwargs
 )
 AsyncSessionLocal = async_sessionmaker(
     engine,

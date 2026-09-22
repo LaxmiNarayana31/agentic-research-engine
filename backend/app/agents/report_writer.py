@@ -203,25 +203,51 @@ Output Pure Markdown Report:"""
                         idx += 1
 
             if verifications:
-                overall_score = sum([getattr(v, "entailment_score", 0.85) for v in verifications]) / len(verifications)
+                overall_score = sum([getattr(v, "entailment_score", 0.0) for v in verifications]) / len(verifications)
             else:
-                overall_score = 0.85
+                overall_score = 0.0
 
+            # Build findings context, annotating unsupported claims so the writer
+            # knows which findings lack source backing. Unsupported findings are
+            # included in context with an explicit warning rather than silently
+            # omitted — the writer is instructed to flag or omit them in the report.
             findings_context = []
             MAX_TOTAL_CHARS = 24000
             current_len = 0
-            for finding in (findings or []):
+
+            # Build a quick lookup: task_id → verification result
+            verif_by_task: dict = {}
+            for v in (verifications or []):
+                # verifications are ordered to match findings; map by index position
+                pass
+            verif_list = list(verifications or [])
+
+            for f_idx, finding in enumerate(findings or []):
                 cite_str = " ".join([f"[{source_map[s]}]" for s in getattr(finding, "sources", []) if s in source_map])
-                
                 summary_text = getattr(finding, "summary", "")
                 if len(summary_text) > 4000:
                     summary_text = summary_text[:4000] + "\n... [TRUNCATED FOR LENGTH]"
-                    
-                chunk = f"Subtask ({getattr(finding, 'task_id', 'task')}): {summary_text} (Sources: {cite_str or 'None'})"
+
+                # Annotate with verification status
+                if f_idx < len(verif_list):
+                    v = verif_list[f_idx]
+                    is_supported = getattr(v, "is_supported", False)
+                    score = getattr(v, "entailment_score", 0.0)
+                    exact_quote = getattr(v, "exact_quote", None)
+                    if is_supported:
+                        verif_tag = f"[VERIFIED: score={score:.2f}]"
+                        if exact_quote:
+                            verif_tag += f' [QUOTE: "{exact_quote[:200]}"]'
+                    else:
+                        verif_tag = f"[UNVERIFIED: score={score:.2f} — DO NOT present as confirmed fact; flag as unconfirmed or omit]"
+                else:
+                    verif_tag = "[UNVERIFIED: no verification result — treat as unconfirmed]"
+
+                chunk = f"Subtask ({getattr(finding, 'task_id', 'task')}): {summary_text} (Sources: {cite_str or 'None'}) {verif_tag}"
                 if current_len + len(chunk) > MAX_TOTAL_CHARS:
                     findings_context.append("\n[Remaining findings omitted to fit context window]")
                     break
-                    
+
                 findings_context.append(chunk)
                 current_len += len(chunk)
 
@@ -274,7 +300,7 @@ Output Pure Markdown Report:"""
                 markdown_content=fallback_md,
                 citation_count=len(findings or []),
                 bibliography=[],
-                verification_score=0.85,
+                verification_score=0.0,
                 used_model="fallback-writer",
                 related_questions=self._generate_related_questions(query, fallback_md)
             )
@@ -312,26 +338,44 @@ Output Pure Markdown Report:"""
                         idx += 1
 
             if verifications:
-                total_score = sum(getattr(v, "entailment_score", 0.85) for v in verifications)
+                total_score = sum(getattr(v, "entailment_score", 0.0) for v in verifications)
                 overall_score = round(total_score / len(verifications), 4)
             else:
-                overall_score = 0.85
+                overall_score = 0.0
 
+            # Build findings context, annotating unsupported claims so the writer
+            # knows which findings lack source backing.
             findings_context = []
             MAX_TOTAL_CHARS = 24000
             current_len = 0
-            for finding in (findings or []):
+            verif_list = list(verifications or [])
+
+            for f_idx, finding in enumerate(findings or []):
                 cite_str = " ".join([f"[{source_map[s]}]" for s in getattr(finding, "sources", []) if s in source_map])
-                
                 summary_text = getattr(finding, "summary", "")
                 if len(summary_text) > 4000:
                     summary_text = summary_text[:4000] + "\n... [TRUNCATED FOR LENGTH]"
-                    
-                chunk = f"Subtask ({getattr(finding, 'task_id', 'task')}): {summary_text} (Sources: {cite_str or 'None'})"
+
+                # Annotate with verification status
+                if f_idx < len(verif_list):
+                    v = verif_list[f_idx]
+                    is_supported = getattr(v, "is_supported", False)
+                    score = getattr(v, "entailment_score", 0.0)
+                    exact_quote = getattr(v, "exact_quote", None)
+                    if is_supported:
+                        verif_tag = f"[VERIFIED: score={score:.2f}]"
+                        if exact_quote:
+                            verif_tag += f' [QUOTE: "{exact_quote[:200]}"]'
+                    else:
+                        verif_tag = f"[UNVERIFIED: score={score:.2f} — DO NOT present as confirmed fact; flag as unconfirmed or omit]"
+                else:
+                    verif_tag = "[UNVERIFIED: no verification result — treat as unconfirmed]"
+
+                chunk = f"Subtask ({getattr(finding, 'task_id', 'task')}): {summary_text} (Sources: {cite_str or 'None'}) {verif_tag}"
                 if current_len + len(chunk) > MAX_TOTAL_CHARS:
                     findings_context.append("\n[Remaining findings omitted to fit context window]")
                     break
-                    
+
                 findings_context.append(chunk)
                 current_len += len(chunk)
 
@@ -390,7 +434,7 @@ Output Pure Markdown Report:"""
                 markdown_content=fallback_md,
                 citation_count=len(findings or []),
                 bibliography=[],
-                verification_score=0.85,
+                verification_score=0.0,
                 used_model="fallback-writer",
                 related_questions=self._generate_related_questions(query, fallback_md)
             )
