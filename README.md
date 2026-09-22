@@ -2,7 +2,7 @@
 <br>
 <img src="assets/logo.svg" width="80" height="80" alt="Deep Research AI Engine Logo" />
 <h1>Deep Research AI Engine</h1>
-<p><b>Autonomous Multi-Agent Deep Research &amp; Intelligence Synthesis Platform</b><br/>
+<p><b>Autonomous Multi-Agent Deep Research & Intelligence Synthesis Platform</b><br/>
 <i>Decompose complex inquiries → crawl live web intelligence → verify claims against source evidence → synthesize publication-grade Markdown dossiers with real-time SSE streaming.</i></p>
 <p>
   <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12"></a>
@@ -16,11 +16,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License: MIT"></a>
 </p>
 <p>
-  <a href="#-executive-overview"><b>Overview</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-system-architecture"><b>Architecture</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-agent-pipeline-deep-dive"><b>Agent Pipeline</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-engineering-highlights"><b>Engineering Highlights</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="#-quick-start"><b>Quick Start</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="#-executive-overview"><b>Overview</b></a>  ·  
+  <a href="#-system-architecture"><b>Architecture</b></a>  ·  
+  <a href="#-agent-pipeline-deep-dive"><b>Agent Pipeline</b></a>  ·  
+  <a href="#-engineering-highlights"><b>Engineering Highlights</b></a>  ·  
+  <a href="#-quick-start"><b>Quick Start</b></a>  ·  
   <a href="#-api-reference"><b>API Reference</b></a>
 </p>
 </div>
@@ -152,13 +152,13 @@ sequenceDiagram
 
 ### Agent Responsibilities
 
-| Agent | File | Role |
-|:---|:---|:---|
-| **Planner** | `app/agents/planner.py` | Decomposes query into prioritized subtasks and generates a dynamic, domain-specific report outline tailored to the subject matter |
-| **Researcher** | `app/agents/researcher.py` | Dispatches parallel web searches via Tavily (+ DuckDuckGo fallback). Cleans and chunks scraped content, then ranks passages with **Hybrid BM25 + Dense Vector RAG** — BM25 lexical scores fused with Gemini embedding cosine similarity via Reciprocal Rank Fusion (RRF). Falls back to BM25-only if the embedding API is unavailable. |
-| **Verifier** | `app/agents/verifier.py` | LLM-based claim verifier. Evaluates each claim against raw source context, assigns an entailment score (0.0–1.0), and extracts verbatim supporting quotes. Unverified claims are flagged to the writer |
-| **Writer** | `app/agents/report_writer.py` | Synthesizes verified findings into GitHub Flavored Markdown with inline citations `[1]`, `[2]`. Streams tokens to frontend in real-time |
-| **Critic** | `app/agents/critic.py` | Editor-in-Chief quality gate. Evaluates completeness, citation density, and outline coverage. Triggers automated rewrite loop if report is insufficient |
+| Agent                | File                            | Role                                                                                                                                                                                                                                                                                                                                         |
+| :------------------- | :------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Planner**    | `app/agents/planner.py`       | Decomposes query into prioritized subtasks and generates a dynamic, domain-specific report outline tailored to the subject matter                                                                                                                                                                                                            |
+| **Researcher** | `app/agents/researcher.py`    | Dispatches parallel web searches via Tavily (+ DuckDuckGo fallback). Cleans and chunks scraped content, then ranks passages with**Hybrid BM25 + Dense Vector RAG** — BM25 lexical scores fused with Gemini embedding cosine similarity via Reciprocal Rank Fusion (RRF). Falls back to BM25-only if the embedding API is unavailable. |
+| **Verifier**   | `app/agents/verifier.py`      | LLM-based claim verifier. Evaluates each claim against raw source context, assigns an entailment score (0.0–1.0), and extracts verbatim supporting quotes. Unverified claims are flagged to the writer                                                                                                                                      |
+| **Writer**     | `app/agents/report_writer.py` | Synthesizes verified findings into GitHub Flavored Markdown with inline citations`[1]`, `[2]`. Streams tokens to frontend in real-time                                                                                                                                                                                                   |
+| **Critic**     | `app/agents/critic.py`        | Editor-in-Chief quality gate. Evaluates completeness, citation density, and outline coverage. Triggers automated rewrite loop if report is insufficient                                                                                                                                                                                      |
 
 ---
 
@@ -166,67 +166,80 @@ sequenceDiagram
 
 When scaling this system, several key architectural decisions were made to prioritize reliability, cost-control, and horizontal scaling over pure theoretical autonomy:
 
-1.  **Why a LangGraph State Machine over a Pure ReAct Agent?**
-    *   *Trade-off:* A pure ReAct agent (Tool Node + LLM loop) can dynamically choose from a massive registry of tools, but it is notoriously prone to infinite loops and massive token bloat when reasoning breaks down. 
-    *   *Decision:* We use a **Flow Engineering** approach (LangGraph `StateGraph`). The high-level path is deterministic (Plan → Research → Verify → Write), ensuring predictable latency and bounded LLM costs. The *dynamism* is explicitly constrained to the Critic's conditional feedback loop (`should_rewrite`), providing the perfect balance of autonomous self-correction and production stability.
+1. **Why a LangGraph State Machine over a Pure ReAct Agent?**
 
-2.  **Why ARQ & Redis Pub/Sub instead of In-Memory Async Tasks?**
-    *   *Trade-off:* Python `asyncio` tasks with in-memory queues are easy to build but fail instantly if the web server process restarts, dropping all active user sessions.
-    *   *Decision:* We fully decoupled the API gateway from task execution. The FastAPI endpoint enqueues a job into an **ARQ** Redis queue. A separate worker process pulls the job, executes the LangGraph state machine, and streams events back to a **Redis Pub/Sub** channel. The FastAPI server simply subscribes to this channel. You can scale the web servers and the LLM workers completely independently.
+   * *Trade-off:* A pure ReAct agent (Tool Node + LLM loop) can dynamically choose from a massive registry of tools, but it is notoriously prone to infinite loops and massive token bloat when reasoning breaks down.
+   * *Decision:* We use a **Flow Engineering** approach (LangGraph `StateGraph`). The high-level path is deterministic (Plan → Research → Verify → Write), ensuring predictable latency and bounded LLM costs. The *dynamism* is explicitly constrained to the Critic's conditional feedback loop (`should_rewrite`), providing the perfect balance of autonomous self-correction and production stability.
+2. **Why ARQ & Redis Pub/Sub instead of In-Memory Async Tasks?**
 
-3.  **Why Reciprocal Rank Fusion (RRF) for Verification?**
-    *   *Trade-off:* Relying solely on Vector/Semantic search can miss exact keyword matches (e.g., specific model numbers or names), while BM25 misses semantic intent.
-    *   *Decision:* The Verification node runs both BM25 and Dense Vector embeddings in parallel, fusing the results via RRF. This ensures the strictest possible verification tagging—if a claim isn't grounded in the hybrid retrieved context, it is explicitly flagged as `[UNVERIFIED]`.
+   * *Trade-off:* Python `asyncio` tasks with in-memory queues are easy to build but fail instantly if the web server process restarts, dropping all active user sessions.
+   * *Decision:* We fully decoupled the API gateway from task execution. The FastAPI endpoint enqueues a job into an **ARQ** Redis queue. A separate worker process pulls the job, executes the LangGraph state machine, and streams events back to a **Redis Pub/Sub** channel. The FastAPI server simply subscribes to this channel. You can scale the web servers and the LLM workers completely independently.
+3. **Why Reciprocal Rank Fusion (RRF) for Verification?**
+
+   * *Trade-off:* Relying solely on Vector/Semantic search can miss exact keyword matches (e.g., specific model numbers or names), while BM25 misses semantic intent.
+   * *Decision:* The Verification node runs both BM25 and Dense Vector embeddings in parallel, fusing the results via RRF. This ensures the strictest possible verification tagging—if a claim isn't grounded in the hybrid retrieved context, it is explicitly flagged as `[UNVERIFIED]`.
 
 ---
 
 ## 🚀 Engineering Highlights
 
 ### Fault-Tolerant Parallel Workers
+
 Individual subtask failures don't crash the pipeline. Failed workers produce empty-source findings with explicit failure messages, ensuring the remaining research completes and unverified claims are clearly flagged in the report.
 
 ### Multi-Model LLM Fallback with 429 Retry
+
 Requests route through Gemma 4 → Gemini 3.7 Flash → Gemini 3.5 Flash → Groq. On `429 Rate Limit` or `RESOURCE_EXHAUSTED`, exponential backoff retries up to 3 attempts before failing over to the next provider.
 
 ### Exact Provider-Reported Token Metering
+
 Token counts come directly from Google GenAI `response.usage_metadata` and Groq `response.usage` — **zero heuristic estimation**. Cost is calculated using official per-model pricing rates via a `contextvars.ContextVar` callback that accumulates usage across all pipeline stages.
 
 ### Semantic Vector Cache
+
 Queries are embedded and evaluated against Upstash Redis + FAISS using cosine similarity. Queries with **≥ 88% similarity** return pre-computed dossiers without re-running the full pipeline. The FAISS index is maintained in-memory with a single cold-start load from Redis; subsequent lookups are pure in-memory vector search.
 
 ### Hybrid BM25 + Dense Retrieval
+
 Within each research subtask, scraped page content is split into 500-char overlapping chunks. Each chunk is scored by both **BM25** (lexical keyword overlap) and **Gemini dense embeddings** (semantic cosine similarity). The two rank lists are fused with **Reciprocal Rank Fusion (RRF, k=60)** to select the top-3 passages passed to the LLM synthesiser. If the embedding API is rate-limited, the pipeline degrades gracefully to BM25-only without interrupting research.
 
 ### SSRF-Hardened URL Fetching
+
 All outbound URL requests are validated against RFC 1918 private ranges, loopback addresses, link-local, and cloud metadata endpoints (AWS `169.254.169.254`, GCP `metadata.google.internal`).
 
 ### Database Connection Pooling
+
 PostgreSQL connections use SQLAlchemy async pooling (`pool_size=10`, `max_overflow=20`, `pool_recycle=1800`, `pool_pre_ping=True`) for high-throughput concurrent research sessions.
 
 ### Rate Limiting
+
 Per-user and per-IP request throttling via Redis-backed sliding window counters with in-memory fallback when Redis is unavailable.
 
 ### Groundedness Score
+
 Computed from LLM entailment scores across all verified claims. Unverified claims (score 0.0) are flagged to the writer with explicit `[UNVERIFIED]` annotations. Displayed as a percentage badge in the frontend alongside token usage and cost metrics.
 
 ### Server-Side PDF Export
+
 Backend PDF generation via ReportLab with Markdown-to-PDF conversion (tables, headings, citations). Frontend also supports client-side export via `html2canvas` + `jsPDF`.
 
 ### Decoupled Background Execution
+
 Research runs as detached `asyncio.Task` background jobs via the `ActiveJob` pub-sub system. Every SSE event is persisted to PostgreSQL so users can refresh, disconnect, and reconnect — even after a server restart — without losing progress. Multiple clients can subscribe to the same job simultaneously.
 
 ### Database Migrations
+
 Alembic migration scripts for PostgreSQL schema evolution without data loss.
 
 ---
 
 ## 🎚️ Effort Tiers
 
-| Tier | Subtasks | Search Depth | Gap Analysis | Retrieval | Verification | Typical Latency |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Low** | 1–2 | Basic | No | Hybrid BM25+Dense | Core claim check | 15–30s |
-| **Medium** | 2–4 | Advanced | No | Hybrid BM25+Dense | Full LLM entailment | 45–75s |
-| **High** | 4–7 | Multi-query | Yes (Depth-2) | Hybrid BM25+Dense | Strict quote extraction | 90–180s |
+| Tier             | Subtasks | Search Depth | Gap Analysis |     Retrieval     |      Verification      | Typical Latency |
+| :--------------- | :------: | :----------: | :-----------: | :---------------: | :---------------------: | :-------------: |
+| **Low**    |   1–2   |    Basic    |      No      | Hybrid BM25+Dense |    Core claim check    |     15–30s     |
+| **Medium** |   2–4   |   Advanced   |      No      | Hybrid BM25+Dense |   Full LLM entailment   |     45–75s     |
+| **High**   |   4–7   | Multi-query | Yes (Depth-2) | Hybrid BM25+Dense | Strict quote extraction |    90–180s    |
 
 ---
 
@@ -327,38 +340,38 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 
 ### Research Endpoints (`/api/research`)
 
-| Method | Endpoint | Description |
-|:---:|:---|:---|
-| `POST` | `/stream` | Primary SSE endpoint. Runs full 5-stage pipeline with real-time streaming |
-| `POST` | `/chat/stream` | Lightweight conversational chat mode (direct LLM response) |
-| `POST` | `/` | Synchronous pipeline. Returns complete `ResearchPipelineResponse` JSON |
-| `POST` | `/planner` | Planner-only. Decomposes query into subtasks without executing searches |
-| `GET` | `/stream/{session_id}/subscribe` | Reconnect to an active or past research session |
-| `POST` | `/{session_id}/cancel` | Cancel an active research job |
-| `GET` | `/history` | List past research sessions |
-| `GET` | `/history/{session_id}` | Full session detail with findings, verifications, and report |
-| `DELETE` | `/history/{session_id}` | Delete a research session |
-| `GET` | `/{session_id}/export/pdf` | Export session report as PDF |
-| `GET` | `/suggestions` | Dynamic trending research topic suggestions via LLM |
+|   Method   | Endpoint                           | Description                                                               |
+| :--------: | :--------------------------------- | :------------------------------------------------------------------------ |
+|  `POST`  | `/stream`                        | Primary SSE endpoint. Runs full 5-stage pipeline with real-time streaming |
+|  `POST`  | `/chat/stream`                   | Lightweight conversational chat mode (direct LLM response)                |
+|  `POST`  | `/`                              | Synchronous pipeline. Returns complete`ResearchPipelineResponse` JSON   |
+|  `POST`  | `/planner`                       | Planner-only. Decomposes query into subtasks without executing searches   |
+|  `GET`  | `/stream/{session_id}/subscribe` | Reconnect to an active or past research session                           |
+|  `POST`  | `/{session_id}/cancel`           | Cancel an active research job                                             |
+|  `GET`  | `/history`                       | List past research sessions                                               |
+|  `GET`  | `/history/{session_id}`          | Full session detail with findings, verifications, and report              |
+| `DELETE` | `/history/{session_id}`          | Delete a research session                                                 |
+|  `GET`  | `/{session_id}/export/pdf`       | Export session report as PDF                                              |
+|  `GET`  | `/suggestions`                   | Dynamic trending research topic suggestions via LLM                       |
 
 ### Auth Endpoints (`/api/auth`)
 
-| Method | Endpoint | Description |
-|:---:|:---|:---|
-| `POST` | `/signup` | Email/password registration |
-| `POST` | `/login` | Email/password authentication |
-| `POST` | `/google` | Google OAuth sign-in |
-| `POST` | `/refresh` | Refresh JWT token |
-| `GET` | `/me` | Current user profile |
-| `GET` | `/config` | Auth configuration (Google Client ID) |
-| `GET` | `/workspaces` | List user workspaces |
-| `POST` | `/workspaces` | Create new workspace |
-| `GET` | `/usage` | User usage statistics |
+|  Method  | Endpoint        | Description                           |
+| :------: | :-------------- | :------------------------------------ |
+| `POST` | `/signup`     | Email/password registration           |
+| `POST` | `/login`      | Email/password authentication         |
+| `POST` | `/google`     | Google OAuth sign-in                  |
+| `POST` | `/refresh`    | Refresh JWT token                     |
+| `GET` | `/me`         | Current user profile                  |
+| `GET` | `/config`     | Auth configuration (Google Client ID) |
+| `GET` | `/workspaces` | List user workspaces                  |
+| `POST` | `/workspaces` | Create new workspace                  |
+| `GET` | `/usage`      | User usage statistics                 |
 
 ### Health
 
-| Method | Endpoint | Description |
-|:---:|:---|:---|
+| Method | Endpoint    | Description                 |
+| :-----: | :---------- | :-------------------------- |
 | `GET` | `/health` | Server uptime and timestamp |
 
 ---
@@ -372,17 +385,17 @@ uv run pytest -v
 
 **Test suites:**
 
-| Suite | Coverage |
-|:---|:---|
-| `test_performance_and_resilience.py` | Fault-tolerant workers, connection pooling, 429 retry, SSRF guard, groundedness score, exact token metering |
-| `test_cancellation_and_search_resilience.py` | Job cancellation, search provider failover |
-| `test_multi_tenancy.py` | User/tenant isolation, workspace scoping |
-| `test_pdf_and_stream_resilience.py` | PDF export, SSE stream resilience |
-| `test_auth.py` | JWT auth, Google OAuth, token refresh |
-| `test_dtos.py` | Pydantic model validation |
-| `test_rate_limiter.py` | Rate limiting guard |
-| `test_semantic_cache.py` | Vector cosine similarity |
-| `test_health.py` | Health endpoint |
+| Suite                                          | Coverage                                                                                                    |
+| :--------------------------------------------- | :---------------------------------------------------------------------------------------------------------- |
+| `test_performance_and_resilience.py`         | Fault-tolerant workers, connection pooling, 429 retry, SSRF guard, groundedness score, exact token metering |
+| `test_cancellation_and_search_resilience.py` | Job cancellation, search provider failover                                                                  |
+| `test_multi_tenancy.py`                      | User/tenant isolation, workspace scoping                                                                    |
+| `test_pdf_and_stream_resilience.py`          | PDF export, SSE stream resilience                                                                           |
+| `test_auth.py`                               | JWT auth, Google OAuth, token refresh                                                                       |
+| `test_dtos.py`                               | Pydantic model validation                                                                                   |
+| `test_rate_limiter.py`                       | Rate limiting guard                                                                                         |
+| `test_semantic_cache.py`                     | Vector cosine similarity                                                                                    |
+| `test_health.py`                             | Health endpoint                                                                                             |
 
 GitHub Actions CI/CD (`.github/workflows/ci.yml`) runs backend `pytest` and frontend `next build` on every push.
 
