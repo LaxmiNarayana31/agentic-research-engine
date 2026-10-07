@@ -8,10 +8,12 @@ import time
 from typing import Optional
 from urllib.parse import urlparse
 import uuid
+import warnings
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 import httpx
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import numpy as np
+from ddgs import DDGS
 from rank_bm25 import BM25Okapi
 
 from app.clients.llm_client import MultiModelLLMClient
@@ -180,16 +182,7 @@ class ResearchAgent:
     async def _search_duckduckgo(self, query: str, max_results: int = 5) -> list:
         """Fallback web search using DuckDuckGo (free, zero API key requirement) with async article scraping."""
         try:
-            try:
-                from ddgs import DDGS
-            except ImportError:
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    from duckduckgo_search import DDGS
-
             def _ddg_sync():
-                import warnings
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     with DDGS() as ddgs:
@@ -405,19 +398,29 @@ class ResearchAgent:
                     best_results = await self._fast_rerank(task.description, raw_results)
                     results_data["web_search"] = ""
                     
-                    for idx, res in enumerate(best_results):
+                    async def _process_item(idx, res):
                         url = res.get("url")
                         if not url:
-                            continue
-                        sources.append(url)
+                            return None
                         img_url = images_list[idx] if idx < len(images_list) else ""
-                        rich_sources.append({
+                        rag_text = await self._hybrid_rag(task.description, res.get("raw_content") or res.get("content", ""))
+                        return {
                             "url": url,
                             "title": res.get("title", "Source"),
-                            "image": img_url
-                        })
-                        rag_text = await self._hybrid_rag(task.description, res.get("raw_content") or res.get("content", ""))
-                        results_data["web_search"] += f"Source ({url}):\n{rag_text}\n\n"
+                            "image": img_url,
+                            "rag_text": rag_text
+                        }
+
+                    processed_items = await asyncio.gather(*[_process_item(i, r) for i, r in enumerate(best_results)], return_exceptions=True)
+                    for item in processed_items:
+                        if isinstance(item, dict) and item.get("url"):
+                            sources.append(item["url"])
+                            rich_sources.append({
+                                "url": item["url"],
+                                "title": item["title"],
+                                "image": item["image"]
+                            })
+                            results_data["web_search"] += f"Source ({item['url']}):\n{item['rag_text']}\n\n"
                 else:
                     # No results from any search engine — record the failure honestly.
                     # Do NOT add fabricated URLs; leave sources empty so the report
@@ -545,19 +548,29 @@ class ResearchAgent:
                     
                     best_results = await self._fast_rerank(task.description, raw_results)
                     results_data["web_search"] = ""
-                    for idx, res in enumerate(best_results):
+                    async def _process_stream_item(idx, res):
                         url = res.get("url")
                         if not url:
-                            continue
-                        sources.append(url)
+                            return None
                         img_url = images_list[idx] if idx < len(images_list) else ""
-                        rich_sources.append({
+                        rag_text = await self._hybrid_rag(task.description, res.get("raw_content") or res.get("content", ""))
+                        return {
                             "url": url,
                             "title": res.get("title", "Source"),
-                            "image": img_url
-                        })
-                        rag_text = await self._hybrid_rag(task.description, res.get("raw_content") or res.get("content", ""))
-                        results_data["web_search"] += f"Source ({url}):\n{rag_text}\n\n"
+                            "image": img_url,
+                            "rag_text": rag_text
+                        }
+
+                    stream_items = await asyncio.gather(*[_process_stream_item(i, r) for i, r in enumerate(best_results)], return_exceptions=True)
+                    for item in stream_items:
+                        if isinstance(item, dict) and item.get("url"):
+                            sources.append(item["url"])
+                            rich_sources.append({
+                                "url": item["url"],
+                                "title": item["title"],
+                                "image": item["image"]
+                            })
+                            results_data["web_search"] += f"Source ({item['url']}):\n{item['rag_text']}\n\n"
                 else:
                     # No results from any search engine — record the failure honestly.
                     # Do NOT add fabricated URLs; leave sources empty so the report
@@ -580,7 +593,7 @@ class ResearchAgent:
                 Autonomously determine the appropriate summary depth based on the complexity and volume of the raw data. Extract the most important facts, metrics, and evidence.""")
 
             summary = ""
-            used_model = "gemma-4-31b-it"
+            used_model = "gemini-2.5-flash-lite"
             try:
                 async for chunk in self.llm_client.stream_text(prompt, effort_level="low"):
                     summary += chunk
