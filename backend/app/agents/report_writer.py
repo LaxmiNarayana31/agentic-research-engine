@@ -263,6 +263,8 @@ Output Pure Markdown Report:"""
             prompt = textwrap.dedent(f"""\
                 You are an expert Technical Report Writer and academic researcher. 
                 
+                Format every answer in valid GitHub-flavored Markdown. Use fenced code blocks with a language tag. Put a blank line before and after lists, tables, and code blocks. Use $...$ for inline math and $$...$$ for block math. Do not output raw HTML. Do not wrap the whole answer in a single code fence. Close every fence and every emphasis marker.
+                
                 Research Topic: "{query}"
 
                 Verified Findings:
