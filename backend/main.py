@@ -77,7 +77,6 @@ async def correlation_id_middleware(request: Request, call_next):
 
 
 # CORS: read allowed origins from ALLOWED_ORIGINS env var (comma-separated).
-# Falls back to localhost dev origins only — never wildcard with credentials.
 _raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
 _allowed_origins: list[str] = (
     [o.strip() for o in _raw_origins.split(",") if o.strip()]
@@ -89,8 +88,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Last-Event-ID"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.add_exception_handler(AppException, app_exception_handler)
