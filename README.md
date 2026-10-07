@@ -223,6 +223,17 @@ Computed from LLM entailment scores across all verified claims. Unverified claim
 
 Backend PDF generation via ReportLab with Markdown-to-PDF conversion (tables, headings, citations). Frontend also supports client-side export via `html2canvas` + `jsPDF`.
 
+### Resilient Streaming Markdown Rendering Pipeline
+
+The presentation layer utilizes a hardened streaming Markdown pipeline built on top of **Streamdown v2** and **Remend**:
+
+$$\text{LLM Token Stream} \longrightarrow \text{normalizeMarkdown()} \longrightarrow \text{Streamdown (remend)} \longrightarrow \text{Sanitized React Tree}$$
+
+- **Pre-Render Normalization**: Converts raw LaTeX math delimiters (`\[...\]` to `$$...$$`, `\(...\)` to `$...$`), inserts missing spacing on ATX headings (e.g. `#Title` → `# Title`), ensures structural blank lines before tables/lists/code blocks, auto-closes unterminated code fences on completed turns, and escapes currency strings (e.g. `$5 and $10`) to prevent false-positive LaTeX math compilation.
+- **Self-Healing Unterminated Tokens**: `remend` dynamically repairs broken formatting, unclosed code blocks, and partial tables during character-by-character SSE streaming without flashing raw syntax. Configured with `remend={{ italic: false }}` to eliminate asterisk token corruption on inline phrases like `*foo*bar`.
+- **Security & XSS Hardening**: Enforces `skipHtml={true}`, blocks unsafe protocols (`javascript:`, `data:`), mandates `target="_blank"` and `rel="noopener noreferrer"` on external links, and wraps all rendering in a zero-crash React `MarkdownErrorBoundary` with white-space preserving `<pre>` fallback.
+- **Editorial Claude Typography**: Uses Claude-style Newsreader serif typography (`font-claude`, `text-[#ececee]`, `leading-[1.82]`) paired with rich citation popover cards displaying domain metadata, favicons, and verified claim anchors without native browser tooltip popups.
+
 ### Decoupled Background Execution
 
 Research runs as detached `asyncio.Task` background jobs via the `ActiveJob` pub-sub system. Every SSE event is persisted to PostgreSQL so users can refresh, disconnect, and reconnect — even after a server restart — without losing progress. Multiple clients can subscribe to the same job simultaneously.
