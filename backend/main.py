@@ -1,15 +1,14 @@
 import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-import uvicorn
-
-import uuid
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -25,6 +24,7 @@ from app.core.errors import (
     validation_exception_handler,
 )
 from app.core.logging import logger, request_id_cv, setup_logging
+from app.core.tracing import get_phoenix_url, init_phoenix_tracing
 from app.db.database import init_db
 
 load_dotenv(override=True)
@@ -54,6 +54,12 @@ async def lifespan(app: FastAPI):
             logger.info("Memori knowledge graph & memory tables verified.")
     except Exception as e:
         logger.warning(f"Memori table startup verification: {e}")
+
+    # Initialize Arize Phoenix Observability & Tracing
+    try:
+        init_phoenix_tracing()
+    except Exception as e:
+        logger.warning(f"Arize Phoenix startup notice: {e}")
 
     yield
 
@@ -117,6 +123,16 @@ async def health():
     except Exception as e:
         logger.error(f"Error in health endpoint: {e}")
         return {"status": "error"}
+
+@app.get("/api/observability/status", tags=["Observability"])
+async def observability_status():
+    """Return active telemetry and Arize Phoenix tracing dashboard status."""
+    return {
+        "status": "active",
+        "framework": "Arize Phoenix",
+        "dashboard_url": get_phoenix_url(),
+        "metrics_supported": ["faithfulness", "answer_relevance", "context_precision", "context_recall"]
+    }
 
 # Include routers
 app.include_router(auth_router)
