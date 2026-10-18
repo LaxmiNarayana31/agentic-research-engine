@@ -1,22 +1,22 @@
 import asyncio
+import importlib
 import os
 import sys
 from logging.config import fileConfig
 
+from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from alembic import context
+
+from app.db.database import Base, DATABASE_URL
 
 # Ensure backend directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 load_dotenv(verbose=True)
 
-from app.db.database import Base, DATABASE_URL
-
 # Import all models here so Alembic can read their metadata
-import importlib
 importlib.import_module("app.models")
 
 config = context.config
