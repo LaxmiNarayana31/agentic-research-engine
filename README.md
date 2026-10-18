@@ -234,13 +234,28 @@ $$\text{LLM Token Stream} \longrightarrow \text{normalizeMarkdown()} \longrighta
 - **Security & XSS Hardening**: Enforces `skipHtml={true}`, blocks unsafe protocols (`javascript:`, `data:`), mandates `target="_blank"` and `rel="noopener noreferrer"` on external links, and wraps all rendering in a zero-crash React `MarkdownErrorBoundary` with white-space preserving `<pre>` fallback.
 - **Editorial Claude Typography**: Uses Claude-style Newsreader serif typography (`font-claude`, `text-[#ececee]`, `leading-[1.82]`) paired with rich citation popover cards displaying domain metadata, favicons, and verified claim anchors without native browser tooltip popups.
 
-### Decoupled Background Execution
+### Arize Phoenix & OpenTelemetry Observability
 
-Research runs as detached `asyncio.Task` background jobs via the `ActiveJob` pub-sub system. Every SSE event is persisted to PostgreSQL so users can refresh, disconnect, and reconnect — even after a server restart — without losing progress. Multiple clients can subscribe to the same job simultaneously.
+Distributed tracing powered by **Arize Phoenix** (`arize-phoenix>=20.20.0`) captures detailed spans across all multi-agent transitions (Planner → Researcher → Verifier → Writer → Critic). Telemetry status and live execution traces can be inspected via:
+- Dashboard: `http://localhost:6006`
+- API Health Status: `GET /api/observability/status`
 
-### Database Migrations
+### Quantitative Ragas Evaluation Benchmark Suite
 
-Alembic migration scripts for PostgreSQL schema evolution without data loss.
+Production-grade RAG and Agent evaluation measuring 4 canonical dimensions:
+- **Faithfulness**: Fact extraction and claim consistency verification against retrieved evidence passages.
+- **Answer Relevance**: Reverse question formulation and semantic alignment against the user's inquiry.
+- **Context Precision**: Signal-to-noise ranking of retrieved chunks versus ground-truth reference statements.
+- **Context Recall**: Coverage of required ground-truth statements present in retrieved passages.
+- **Reports & UI**: Automatically exports both JSON scorecards (`ragas_benchmark_report.json`) and standalone HTML dashboards (`ragas_benchmark_report.html`). The Next.js frontend surfaces an interactive Ragas Quality & Groundedness Scorecard badge in the report header.
+
+### Decoupled Background Execution & Distributed ARQ Workers
+
+Research runs either as in-process resilient background tasks or queued through distributed **ARQ** Redis workers via `POST /api/research/queue`. Every SSE event is persisted to PostgreSQL and broadcast via connection-pooled Redis Pub/Sub so clients can reconnect with `Last-Event-ID` resumption.
+
+### Database Migrations (Alembic)
+
+Alembic migration version control tracks PostgreSQL database schema evolutions (`alembic upgrade head`) and guarantees zero-downtime deployments.
 
 ---
 

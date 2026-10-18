@@ -76,6 +76,10 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      - name: Run Frontend Tests (Vitest)
+        working-directory: frontend
+        run: npx vitest run
+
       - name: Build Next.js Production Bundle
         working-directory: frontend
         env:

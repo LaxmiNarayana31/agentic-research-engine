@@ -28,6 +28,7 @@ sqlite_dbs/
 .qdrant_storage/
 versions//
 .fastembed_cache
+versions/
 
 # Logging
 logs/

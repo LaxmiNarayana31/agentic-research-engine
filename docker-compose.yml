@@ -73,6 +73,26 @@ services:
     networks:
       - app-network
 
+  # ─────────────────────────────────────────────
+  # Worker — ARQ Distributed Background Runner
+  # ─────────────────────────────────────────────
+  worker:
+    image: deep-research-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: deep-research-worker
+    restart: unless-stopped
+    env_file:
+      - path: ./backend/.env
+        required: true
+    command: ["python", "-m", "arq", "worker.WorkerSettings"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app-network
+
 volumes:
   backend-logs:
 
