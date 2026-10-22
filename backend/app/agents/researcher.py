@@ -5,15 +5,15 @@ import re
 import socket
 import textwrap
 import time
-from typing import Optional
-from urllib.parse import urlparse
 import uuid
 import warnings
+from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 import numpy as np
 from ddgs import DDGS
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from rank_bm25 import BM25Okapi
 
 from app.clients.llm_client import MultiModelLLMClient
@@ -90,6 +90,23 @@ def is_safe_url(url: str) -> bool:
     except Exception as e:
         logger.debug(f"SSRF validation note for {url}: {e}")
         return False
+
+INJECTION_PATTERNS = [
+    re.compile(r"(?i)\bignore\s+(all\s+)?(previous|prior|above)\s+instructions\b"),
+    re.compile(r"(?i)\b(system\s*prompt|system\s*message|developer\s*mode)\b"),
+    re.compile(r"(?i)<\|(im_start|im_end|system|user|assistant|endoftext)\|?>"),
+    re.compile(r"(?i)\bdisregard\s+(all\s+)?(prior|previous)\s+context\b"),
+    re.compile(r"(?i)\[\s*INST\s*\].*?\[\s*/INST\s*\]"),
+]
+
+def sanitize_scraped_content(text: str) -> str:
+    """Neutralizes indirect prompt injection attacks hidden in scraped external web pages."""
+    if not text or not isinstance(text, str):
+        return ""
+    sanitized = text
+    for pattern in INJECTION_PATTERNS:
+        sanitized = pattern.sub("[REDACTED_SUSPICIOUS_PROMPT_INJECTION]", sanitized)
+    return sanitized
 
 async def _fetch_page_content(url: str, timeout: float = 3.5) -> str:
     """Fast async web scraper with SSRF protection extracting readable article text.
@@ -420,7 +437,7 @@ class ResearchAgent:
                                 "title": item["title"],
                                 "image": item["image"]
                             })
-                            results_data["web_search"] += f"Source ({item['url']}):\n{item['rag_text']}\n\n"
+                            results_data["web_search"] += f"Source ({item['url']}):\n{sanitize_scraped_content(item['rag_text'])}\n\n"
                 else:
                     # No results from any search engine — record the failure honestly.
                     # Do NOT add fabricated URLs; leave sources empty so the report
@@ -570,7 +587,7 @@ class ResearchAgent:
                                 "title": item["title"],
                                 "image": item["image"]
                             })
-                            results_data["web_search"] += f"Source ({item['url']}):\n{item['rag_text']}\n\n"
+                            results_data["web_search"] += f"Source ({item['url']}):\n{sanitize_scraped_content(item['rag_text'])}\n\n"
                 else:
                     # No results from any search engine — record the failure honestly.
                     # Do NOT add fabricated URLs; leave sources empty so the report
