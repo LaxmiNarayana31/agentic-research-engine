@@ -3,8 +3,17 @@ import contextvars
 import json
 import os
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
 import uuid
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import psycopg
+from google import genai
+from memori import Memori
+from openai import AsyncOpenAI
+
+from app.core.config import settings
+from app.core.errors import EmbeddingRateLimitError
+from app.core.logging import logger
 
 # ContextVar callback receiving exact token usage from respective LLM provider: (prompt_tokens, completion_tokens, total_tokens, model)
 token_usage_callback: contextvars.ContextVar[Optional[Callable[[int, int, int, str], None]]] = contextvars.ContextVar("token_usage_callback", default=None)
@@ -26,24 +35,8 @@ def calculate_cost(prompt_tokens: int, completion_tokens: int, model: str = "def
     rates = MODEL_RATES.get(model, MODEL_RATES["default"])
     return (prompt_tokens * rates["input"]) + (completion_tokens * rates["output"])
 
-from google import genai
-from openai import AsyncOpenAI
-import psycopg
-
-try:
-    from memori import Memori
-except ImportError:
-    Memori = None
-
-from app.core.config import settings
-from app.core.errors import EmbeddingRateLimitError
-from app.core.logging import logger
-
 def init_memori_engine():
     """Initializes Memori strictly with PostgreSQL database."""
-    if Memori is None:
-        logger.warning("Memori package not installed. Skipping memory engine initialization.")
-        return None
 
     DB_HOST = os.getenv("DB_HOST")
     DB_PORT = os.getenv("DB_PORT", "5432")
@@ -78,6 +71,15 @@ def set_memory_context(entity_id: str = "research_user", process_id: str = None)
             _mem.attribution(entity_id=entity_id, process_id=pid)
         except Exception as e:
             logger.warning(f"Failed to set local Memori context: {e}")
+
+
+LLM_MARKDOWN_SYSTEM_PROMPT = (
+    "Format every answer in valid GitHub-flavored Markdown. Use fenced code "
+    "blocks with a language tag. Put a blank line before and after lists, "
+    "tables, and code blocks. Use $...$ for inline math and $$...$$ for "
+    "block math. Do not output raw HTML. Do not wrap the whole answer in a "
+    "single code fence. Close every fence and every emphasis marker."
+)
 
 
 class MultiModelLLMClient:
@@ -117,40 +119,39 @@ class MultiModelLLMClient:
         try:
             if self.agent_role == "planner":
                 return [
-                    {"provider": "gemini", "model": "gemma-4-31b-it"},
-                    {"provider": "gemini", "model": "gemma-4-26b-a4b-it"},
+                    {"provider": "gemini", "model": "gemini-2.5-flash"},
+                    {"provider": "gemini", "model": "gemini-3.5-flash"},
                     {"provider": "groq", "model": "openai/gpt-oss-120b"},
-                    {"provider": "gemini", "model": "gemini-3.7-flash"}
+                    {"provider": "gemini", "model": "gemini-2.5-flash-lite"}
                 ]
             if effort_level == "low":
                 return [
-                    {"provider": "gemini", "model": "gemma-4-31b-it"},
-                    {"provider": "gemini", "model": "gemma-4-26b-a4b-it"},
-                    {"provider": "gemini", "model": "gemini-3.5-flash-lite"},
-                    {"provider": "gemini", "model": "gemini-3.1-flash-lite"}
+                    {"provider": "gemini", "model": "gemini-2.5-flash-lite"},
+                    {"provider": "gemini", "model": "gemini-2.5-flash"},
+                    {"provider": "groq", "model": "openai/gpt-oss-20b"},
+                    {"provider": "gemini", "model": "gemini-3.5-flash-lite"}
                 ]
             elif effort_level == "medium":
                 return [
-                    {"provider": "gemini", "model": "gemma-4-31b-it"},
-                    {"provider": "gemini", "model": "gemma-4-26b-a4b-it"},
+                    {"provider": "gemini", "model": "gemini-2.5-flash"},
                     {"provider": "gemini", "model": "gemini-3.5-flash"},
-                    {"provider": "gemini", "model": "gemini-3.1-pro-preview"}
+                    {"provider": "groq", "model": "openai/gpt-oss-120b"},
+                    {"provider": "gemini", "model": "gemini-2.5-flash-lite"}
                 ]
             elif effort_level == "high":
                 return [
-                    {"provider": "gemini", "model": "gemma-4-31b-it"},
-                    {"provider": "gemini", "model": "gemma-4-26b-a4b-it"},
+                    {"provider": "gemini", "model": "gemini-2.5-flash"},
+                    {"provider": "gemini", "model": "gemini-3.5-flash"},
                     {"provider": "gemini", "model": "gemini-3.7-flash"},
                     {"provider": "groq", "model": "openai/gpt-oss-120b"}
                 ]
             return [
-                {"provider": "gemini", "model": "gemma-4-31b-it"},
-                {"provider": "gemini", "model": "gemma-4-26b-a4b-it"},
-                {"provider": "gemini", "model": "gemini-3.7-flash"},
+                {"provider": "gemini", "model": "gemini-2.5-flash"},
+                {"provider": "gemini", "model": "gemini-3.5-flash"},
                 {"provider": "groq", "model": "openai/gpt-oss-120b"}
             ]
         except Exception:
-            return [{"provider": "gemini", "model": "gemma-4-31b-it"}]
+            return [{"provider": "gemini", "model": "gemini-2.5-flash"}]
         
     async def complete_json(self, prompt: str, effort_level: str = "medium") -> Tuple[Dict[Any, Any], str]:
         """Tries to get a JSON response from the models in the fallback chain with full exception safety."""
@@ -214,7 +215,10 @@ class MultiModelLLMClient:
 
             response = await self._groq_client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "system", "content": LLM_MARKDOWN_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
                 temperature=0.2
             )
             # Capture exact token counts directly from Groq/OpenAI response
@@ -242,7 +246,8 @@ class MultiModelLLMClient:
                 try:
                     response = await client.aio.models.generate_content(
                         model=model,
-                        contents=prompt
+                        contents=prompt,
+                        config={"system_instruction": LLM_MARKDOWN_SYSTEM_PROMPT}
                     )
                     # Capture exact token counts directly from Google GenAI response.usage_metadata
                     meta = getattr(response, "usage_metadata", None)
@@ -300,7 +305,10 @@ class MultiModelLLMClient:
 
             response = await self._groq_client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "system", "content": LLM_MARKDOWN_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
                 temperature=0.2,
                 stream=True,
                 stream_options={"include_usage": True}
@@ -336,7 +344,8 @@ class MultiModelLLMClient:
                 try:
                     response = await client.aio.models.generate_content_stream(
                         model=model,
-                        contents=prompt
+                        contents=prompt,
+                        config={"system_instruction": LLM_MARKDOWN_SYSTEM_PROMPT}
                     )
                     stream_p = 0
                     stream_c = 0
@@ -394,8 +403,12 @@ class MultiModelLLMClient:
                             batch_result = [e.values for e in response.embeddings]
                         break
                     except Exception as e:
+                        err_str = str(e).lower()
                         logger.warning(f"Embedding batch [{i}:{i+len(batch_texts)}] failed with {model}: {e}")
                         last_err = e
+                        if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                            logger.info("⚡ Embedding quota exhausted; switching immediately to native BM25Okapi RAG ranking.")
+                            raise EmbeddingRateLimitError(f"Embedding quota exhausted: {e}")
                 
                 if batch_result is None:
                     raise EmbeddingRateLimitError(f"All embedding models failed for batch. Last error: {last_err}")
@@ -406,4 +419,4 @@ class MultiModelLLMClient:
             raise
         except Exception as top_err:
             logger.error(f"Error generating embeddings: {top_err}")
-            raise
+            raise
