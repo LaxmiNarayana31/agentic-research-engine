@@ -41,18 +41,22 @@ class VerificationAgent:
                 Return ONLY a valid JSON object matching this schema:
                 {{
                   "is_supported": true or false,
-                  "exact_quote": "The exact verbatim quote from the raw data that proves or disproves the claim, or null if no relevant text was found",
+                  "exact_quote": "The exact verbatim quote from the raw data that proves the claim, or null if no relevant text was found",
+                  "has_contradiction": true or false,
+                  "contradiction_details": "Exact quote or explanation if raw source data explicitly contradicts the claim, else null",
                   "entailment_score": float between 0.0 and 1.0,
+                  "uncertainty_level": "low" or "medium" or "high",
                   "verifier_notes": "Brief explanation of the verdict"
                 }}
 
                 Scoring guidance:
-                - 0.9–1.0: claim is directly and explicitly supported by a verbatim passage
-                - 0.6–0.9: claim is reasonably inferable from the source data
-                - 0.3–0.6: claim is weakly or only partially supported
-                - 0.0–0.3: claim is unsupported or contradicted
+                - 0.9–1.0: claim is directly and explicitly supported by a verbatim passage (uncertainty: low)
+                - 0.6–0.9: claim is reasonably inferable from the source data (uncertainty: low or medium)
+                - 0.3–0.6: claim is weakly or only partially supported (uncertainty: medium or high)
+                - 0.0–0.3: claim is unsupported or contradicted (uncertainty: high)
+                - If the raw source contradicts the claim, set has_contradiction=true, is_supported=false, and entailment_score=0.0.
 
-                If raw source data is empty or too short to evaluate, set is_supported=false and entailment_score=0.0.
+                If raw source data is empty or too short to evaluate, set is_supported=false, entailment_score=0.0, and uncertainty_level="high".
 
                 JSON Response:""")
 
@@ -62,6 +66,11 @@ class VerificationAgent:
                 score = float(data.get("entailment_score", 0.0))
                 notes = str(data.get("verifier_notes", f"Verified via {used_model}"))
                 exact_quote = data.get("exact_quote") or None
+                has_contradiction = bool(data.get("has_contradiction", False))
+                contradiction_details = data.get("contradiction_details") or None
+                uncertainty_level = str(data.get("uncertainty_level", "low")).lower()
+                if uncertainty_level not in ("low", "medium", "high"):
+                    uncertainty_level = "high" if score < 0.5 else "low"
             except Exception as e:
                 logger.warning(f"Claim verification LLM failed for '{claim_text[:40]}...': {e}")
                 # Verification failed — treat as UNSUPPORTED, never silently assume supported.
@@ -70,7 +79,10 @@ class VerificationAgent:
                     is_supported=False,
                     entailment_score=0.0,
                     verifier_notes="Verification failed (LLM error) — claim treated as unverified.",
-                    exact_quote=None
+                    exact_quote=None,
+                    has_contradiction=False,
+                    contradiction_details=None,
+                    uncertainty_level="high"
                 )
 
             return ClaimVerificationResult(
@@ -78,7 +90,10 @@ class VerificationAgent:
                 is_supported=is_supported,
                 entailment_score=score,
                 verifier_notes=notes,
-                exact_quote=exact_quote
+                exact_quote=exact_quote,
+                has_contradiction=has_contradiction,
+                contradiction_details=contradiction_details,
+                uncertainty_level=uncertainty_level
             )
         except Exception as top_err:
             logger.error(f"Error in _verify_single_finding: {top_err}")
@@ -87,7 +102,10 @@ class VerificationAgent:
                 is_supported=False,
                 entailment_score=0.0,
                 verifier_notes="Verification could not be completed — claim treated as unverified.",
-                exact_quote=None
+                exact_quote=None,
+                has_contradiction=False,
+                contradiction_details=None,
+                uncertainty_level="high"
             )
 
     async def verify_findings(self, findings: List[ResearchFinding]) -> List[ClaimVerificationResult]:
