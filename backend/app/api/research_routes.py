@@ -1,15 +1,20 @@
-from datetime import datetime
+import json
+import os
 import re
+import uuid
+from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, Request, Response
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.database import get_db
-from fastapi.responses import StreamingResponse
 
-from app.helpers.auth_helper import get_optional_user, get_user_tenant_id
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import AppException
 from app.core.logging import logger
+from app.db.database import get_db
 from app.dtos.api_dto import ErrorResponse, ResearchPipelineRequest, ResearchPipelineResponse
+from app.evals.runner import run_benchmark_evaluation
+from app.helpers.auth_helper import get_optional_user, get_user_tenant_id
 from app.models.user import User
 from app.services.pdf_export_service import pdf_export_service
 from app.services.rate_limiter import rate_limit_guard
@@ -28,6 +33,44 @@ async def get_research_history(
     except Exception as e:
         logger.error(f"Error fetching research history: {e}")
         return {"history": []}
+
+@router.post("/history/claim", tags=["Orchestration"])
+async def claim_research_history(
+    payload: dict,
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Claim and migrate guest sessions into the authenticated user's workspace."""
+    if not user:
+        return {"success": False, "message": "Authentication required to claim sessions.", "claimed_count": 0}
+    session_ids = payload.get("session_ids", [])
+    tenant_id = await get_user_tenant_id(user, db)
+    return await research_service.claim_sessions(session_ids, user.id, tenant_id=tenant_id)
+
+@router.get("/evals/benchmark", tags=["Evaluation"])
+async def trigger_eval_benchmark(limit: int = 5):
+    """Execute quantitative Ragas benchmark evaluation suite across golden test dataset."""
+    try:
+        summary = await run_benchmark_evaluation(limit=limit)
+        return summary
+    except Exception as e:
+        logger.error(f"Error running benchmark evals: {e}")
+        raise AppException(code="EVAL_ERROR", message=f"Failed to execute evaluation suite: {e}", status_code=500)
+
+@router.get("/evals/latest", tags=["Evaluation"])
+async def get_latest_eval_report():
+    """Retrieve the latest cached Ragas evaluation scorecard."""
+    json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "evals", "ragas_benchmark_report.json")
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "status": "no_report",
+        "message": "No benchmark evaluation report found. Run /api/research/evals/benchmark to generate one."
+    }
 
 @router.get("/suggestions", tags=["Orchestration"])
 async def get_research_suggestions():
@@ -199,6 +242,47 @@ async def stream_chat_endpoint(
     except Exception as e:
         logger.error(f"Failed to start chat stream: {e}")
         raise AppException(code="STREAM_ERROR", message=str(e), status_code=500)
+
+@router.post("/queue", tags=["Orchestration"])
+async def enqueue_research_job(
+    req: ResearchPipelineRequest,
+    request: Request,
+    response: Response,
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Enqueue a research job to the distributed ARQ background worker queue and return subscription stream metadata."""
+    await rate_limit_guard(request, response, user)
+    try:
+        user_id = user.id if user else None
+        tenant_id = await get_user_tenant_id(user, db)
+        session_id = req.session_id or str(uuid.uuid4())
+        
+        pool = await research_service.get_arq_pool()
+        if not pool:
+            raise AppException(code="QUEUE_UNAVAILABLE", message="ARQ background worker queue is unavailable or Redis is not connected.", status_code=503)
+
+        job = await pool.enqueue_job(
+            "research_job",
+            session_id,
+            req.query,
+            req.effort_level,
+            req.previous_session_id,
+            user_id,
+            tenant_id
+        )
+
+        return {
+            "session_id": session_id,
+            "job_id": job.job_id if job else None,
+            "status": "queued",
+            "subscribe_url": f"/api/research/stream/{session_id}/subscribe"
+        }
+    except AppException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to enqueue research job: {e}")
+        raise AppException(code="QUEUE_ERROR", message=str(e), status_code=500)
 
 @router.get("/stream/{session_id}/subscribe", tags=["Orchestration"])
 async def subscribe_research_stream(
