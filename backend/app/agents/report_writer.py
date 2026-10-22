@@ -24,6 +24,47 @@ def strip_outer_fences(text: str) -> str:
     except Exception:
         return text
 
+def validate_and_sanitize_citations(markdown_content: str, bibliography: List[dict]) -> tuple[str, int, int]:
+    """
+    Validates all inline citations [N] in the synthesized markdown against the actual bibliography.
+    Neutralizes or strips phantom hallucinated citations that do not exist in the source bibliography.
+    Returns: (sanitized_markdown, valid_citation_count, phantom_citation_count)
+    """
+    if not markdown_content:
+        return "", 0, 0
+    
+    valid_ids = set()
+    for b in (bibliography or []):
+        cid = b.get("citation_id", "")
+        clean_num = cid.strip("[] ")
+        if clean_num.isdigit():
+            valid_ids.add(int(clean_num))
+    
+    valid_count = 0
+    phantom_count = 0
+    
+    def _replace_cite(match):
+        nonlocal valid_count, phantom_count
+        num_str = match.group(1)
+        try:
+            num = int(num_str)
+            if num in valid_ids:
+                valid_count += 1
+                return f"[{num}]"
+            else:
+                phantom_count += 1
+                # Strip hallucinated reference
+                return ""
+        except ValueError:
+            return match.group(0)
+
+    # Match standalone numeric brackets like [1], [2], [14] that are not markdown links like [title](url)
+    sanitized = re.sub(r'\[(\d+)\](?!\()', _replace_cite, markdown_content)
+    # Clean up double spaces created by stripped citations before punctuation
+    sanitized = re.sub(r' +([,\.\?!;:])', r'\1', sanitized)
+    sanitized = re.sub(r'  +', ' ', sanitized)
+    return sanitized, valid_count, phantom_count
+
 class ReportWriterAgent:
     """Report Writer Agent synthesizing verified research into pure GitHub Flavored Markdown reports with citations."""
 
@@ -33,10 +74,13 @@ class ReportWriterAgent:
     def _build_gfm_rules(self) -> str:
         return """
 STRICT OUTPUT FORMAT CONSTRAINTS:
-1. ONLY return pure GitHub Flavored Markdown (GFM).
-2. DO NOT wrap the output in ```markdown ... ``` code fences.
-3. DO NOT include any conversational preamble or postamble (e.g. do NOT say "Here is your report:" or "Hope this helps!"). Start directly with the main '#' title header.
-4. For all Markdown Tables:
+1. Format every answer in valid GitHub-flavored Markdown (GFM).
+2. Use fenced code blocks with a language tag (e.g. ```python, ```bash). Do not wrap the whole answer in a single code fence. Close every fence and every emphasis marker.
+3. Put a blank line before and after lists, tables, and code blocks.
+4. Use `$...$` for inline math and `$$...$$` for block math. Do not treat currency like $5 and $10 as math.
+5. Do not output raw HTML.
+6. DO NOT include any conversational preamble or postamble (e.g. do NOT say "Here is your report:" or "Hope this helps!"). Start directly with the main '#' title header.
+7. For all Markdown Tables:
    - Always put every table row on a new line with standard markdown pipes.
    - Example:
      | Entity | Specification | Market Cap | Use Case |
@@ -44,8 +88,8 @@ STRICT OUTPUT FORMAT CONSTRAINTS:
      | Item 1 | Spec A | $1.2B | Core Feature |
      | Item 2 | Spec B | $800M | Data Stream |
    - NEVER collapse table rows together on a single line.
-5. Use clean Unicode characters (→, ≈, •, ≥, ≤) instead of LaTeX syntax (\\rightarrow, \\approx).
-6. Use inline citations [1], [2] referencing the provided sources.
+8. Use clean Unicode characters (→, ≈, •, ≥, ≤) or clean markdown.
+9. Use inline citations [1], [2] referencing the provided sources.
 """
 
     def _generate_related_questions(self, query: str, markdown: str) -> List[str]:
@@ -279,10 +323,13 @@ Output Pure Markdown Report:"""
             raw_text, used_model = await self.llm_client.complete_text(prompt, effort_level)
             if raw_text and len(raw_text.strip()) > 50:
                 pure_markdown = strip_outer_fences(raw_text.strip())
-                related_qs = self._generate_related_questions(query, pure_markdown)
+                validated_markdown, valid_cite_count, phantom_cite_count = validate_and_sanitize_citations(pure_markdown, bibliography)
+                if phantom_cite_count > 0:
+                    logger.info(f"Citation Validator sanitized {phantom_cite_count} phantom citations from generated report.")
+                related_qs = self._generate_related_questions(query, validated_markdown)
                 return FinalReport(
                     title=f"Research Report: {query}",
-                    markdown_content=pure_markdown,
+                    markdown_content=validated_markdown,
                     citation_count=len(bibliography),
                     bibliography=bibliography,
                     verification_score=overall_score,
