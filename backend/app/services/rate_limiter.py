@@ -1,19 +1,12 @@
 import asyncio
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
-import time
 from typing import Dict, List, Optional, Tuple
+
+import redis.asyncio as aioredis
 from fastapi import Request, Response
-
-try:
-    from upstash_redis import Redis as UpstashRedis
-except ImportError:
-    UpstashRedis = None
-
-try:
-    import redis.asyncio as aioredis
-except ImportError:
-    aioredis = None
+from upstash_redis import Redis as UpstashRedis
 
 from app.core.config import settings
 from app.core.errors import AppException
