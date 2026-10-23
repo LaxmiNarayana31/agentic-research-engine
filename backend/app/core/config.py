@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-load_dotenv(override=True)
+load_dotenv(verbose=True)
 
 class Settings(BaseSettings):
     tavily_api_key: str = Field(default="dev_key", description="Tavily API Key")
