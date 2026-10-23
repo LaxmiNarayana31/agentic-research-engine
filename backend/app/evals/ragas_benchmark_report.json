@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-10-09T08:58:28.828125+00:00",
+  "total_test_cases": 1,
+  "duration_seconds": 7.67,
+  "aggregate_scores": {
+    "faithfulness": 0.833,
+    "answer_relevance": 0.95,
+    "context_precision": 1.0,
+    "context_recall": 0.667,
+    "composite_score": 0.863
+  },
+  "phoenix_dashboard_url": "http://localhost:6006",
+  "results": [
+    {
+      "id": "bench_01",
+      "domain": "Frontier AI Architecture",
+      "question": "How do test-time compute scaling laws in DeepSeek-R1 and OpenAI o3 differ from standard pre-training scaling laws?",
+      "answer_preview": "Standard pre-training scaling laws, such as those described by Chinchilla and Kaplan, establish a power-law relationship between model performance and factors like compute, paramet...",
+      "metrics": {
+        "faithfulness": 0.833,
+        "answer_relevance": 0.95,
+        "context_precision": 1.0,
+        "context_recall": 0.667
+      },
+      "composite_score": 0.863
+    }
+  ]
+}

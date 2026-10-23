@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>RAGAS Deep Research Evaluation Report</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background:#0f172a; color:#f8fafc; padding:2rem; }
+        .card { background:#1e293b; border-radius:12px; padding:1.5rem; margin-bottom:1.5rem; border:1px solid #334155; }
+        .header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding-bottom:1rem; margin-bottom:1.5rem; }
+        .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; margin-bottom:1.5rem; }
+        .stat-card { background:#0f172a; border:1px solid #334155; padding:1.25rem; border-radius:10px; text-align:center; }
+        .stat-val { font-size:2rem; font-weight:bold; }
+        .stat-lbl { font-size:0.8rem; text-transform:uppercase; color:#94a3b8; margin-top:0.25rem; letter-spacing:0.05em; }
+        table { width:100%; border-collapse:collapse; margin-top:1rem; }
+        th, td { padding:0.85rem; text-align:left; border-bottom:1px solid #334155; font-size:0.875rem; }
+        th { background:#0f172a; color:#94a3b8; font-size:0.75rem; text-transform:uppercase; }
+        .badge { background:#334155; color:#cbd5e1; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.75rem; }
+        .link-btn { display:inline-block; padding:0.5rem 1rem; background:#06b6d4; color:#0f172a; border-radius:6px; font-weight:bold; text-decoration:none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="header">
+            <div>
+                <h1 style="margin:0; font-size:1.5rem; color:#38bdf8;">Deep Research Engine — Ragas Quality Scorecard</h1>
+                <p style="margin:0.25rem 0 0; color:#94a3b8; font-size:0.875rem;">Generated on 2026-10-09T08:58:28.828125+00:00 • Duration: 7.67s</p>
+            </div>
+            <div>
+                <a class="link-btn" href="http://localhost:6006" target="_blank">Open Arize Phoenix UI</a>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="stat-card">
+                <div class="stat-val" style="color:#10b981;">83%</div>
+                <div class="stat-lbl">Faithfulness (Factual Consistency)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-val" style="color:#06b6d4;">95%</div>
+                <div class="stat-lbl">Answer Relevance (Query Match)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-val" style="color:#6366f1;">100%</div>
+                <div class="stat-lbl">Context Precision (Signal/Noise)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-val" style="color:#a855f7;">66%</div>
+                <div class="stat-lbl">Context Recall (Coverage)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-val" style="color:#f59e0b;">86%</div>
+                <div class="stat-lbl">Overall Composite Quality</div>
+            </div>
+        </div>
+
+        <h2 style="font-size:1.15rem; color:#cbd5e1; margin-top:1.5rem;">Benchmark Results Breakdown</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Domain</th>
+                    <th>Question</th>
+                    <th>Faithfulness</th>
+                    <th>Relevance</th>
+                    <th>Precision</th>
+                    <th>Recall</th>
+                    <th>Composite</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr>
+            <td style="font-weight:600; color:#06b6d4;">bench_01</td>
+            <td><span class="badge">Frontier AI Architecture</span></td>
+            <td>How do test-time compute scaling laws in DeepSeek-R1 and OpenAI o3 differ from standard pre-training scaling laws?</td>
+            <td style="color:#10b981; font-weight:bold;">83%</td>
+            <td style="color:#06b6d4; font-weight:bold;">95%</td>
+            <td style="color:#6366f1; font-weight:bold;">100%</td>
+            <td style="color:#a855f7; font-weight:bold;">66%</td>
+            <td style="font-weight:bold;">86%</td>
+        </tr>
+        
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
