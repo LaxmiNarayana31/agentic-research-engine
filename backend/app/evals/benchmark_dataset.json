@@ -1,0 +1,58 @@
+[
+  {
+    "id": "bench_01",
+    "domain": "Frontier AI Architecture",
+    "question": "How do test-time compute scaling laws in DeepSeek-R1 and OpenAI o3 differ from standard pre-training scaling laws?",
+    "ground_truth": "Test-time compute scaling trades inference latency and inference FLOPs (via chain-of-thought exploration, verification, and Monte Carlo tree search) for increased accuracy, whereas pre-training scaling laws focus on model parameter count, training token volume, and compute during training.",
+    "contexts": [
+      "DeepSeek-R1 leverages large-scale reinforcement learning without supervised fine-tuning to incentivize self-verification and reasoning chains at inference time.",
+      "Pre-training scaling laws from Chinchilla and Kaplan quantify performance gains as a power-law function of compute, parameter count, and dataset token size.",
+      "Test-time compute allocation allows models to dynamically allocate varying inference FLOPs depending on the reasoning difficulty of the prompt."
+    ]
+  },
+  {
+    "id": "bench_02",
+    "domain": "Fusion Energy",
+    "question": "What is the role of High-Temperature Superconducting (HTS) REBCO magnets in commercial tokamak fusion reactors like Commonwealth Fusion Systems SPARC?",
+    "ground_truth": "REBCO HTS magnets generate magnetic fields exceeding 20 Tesla, which dramatically reduces the required volume of the tokamak (since fusion power density scales with the fourth power of magnetic field strength), making compact, economically viable commercial fusion feasible.",
+    "contexts": [
+      "Commonwealth Fusion Systems developed a 20-Tesla large-scale High-Temperature Superconducting magnet using Rare-Earth Barium Copper Oxide (REBCO) tape.",
+      "Fusion power density scales proportionally with B to the fourth power, meaning doubling the magnetic field strength increases power density by 16 times.",
+      "Higher magnetic field confinement allows tokamaks like SPARC to achieve Q > 1 net energy gain in a significantly smaller physical footprint than ITER."
+    ]
+  },
+  {
+    "id": "bench_03",
+    "domain": "Quantum Computing",
+    "question": "What are neutral-atom quantum processors and how do optical tweezers enable dynamic qubit rearrangement?",
+    "ground_truth": "Neutral-atom quantum computers trap individual atoms (like Rubidium or Ytterbium) in arrays of optical tweezers, using laser excitation to Rydberg states for two-qubit entanglement gates and dynamically moving tweezers to create flexible all-to-all connectivity.",
+    "contexts": [
+      "Neutral-atom platforms trap arrays of atoms in 2D and 3D optical tweezer lattices created by focused laser beams.",
+      "Two-qubit entangling gates are performed by exciting atoms into high-energy Rydberg states where dipole-dipole interactions create a Rydberg blockade.",
+      "Acousto-optic deflectors enable moving optical tweezers during algorithm execution, allowing dynamic physical qubit shuttling and all-to-all graph connectivity."
+    ]
+  },
+  {
+    "id": "bench_04",
+    "domain": "Biotech & Genomics",
+    "question": "How does base editing differ from traditional CRISPR-Cas9 double-stranded break gene editing?",
+    "ground_truth": "Base editing uses a catalytically disabled Cas nuclease fused to a deaminase enzyme to directly convert one target nucleotide into another (e.g., C to T, A to G) without creating double-stranded DNA breaks, substantially reducing insertions, deletions, and off-target chromosomal rearrangements.",
+    "contexts": [
+      "Traditional CRISPR-Cas9 creates double-stranded DNA breaks (DSBs), relying on error-prone non-homologous end joining (NHEJ) which frequently results in stochastic indels.",
+      "Base editors fuse a Cas9 nickase to cytidine or adenosine deaminase enzymes, chemically converting target nucleotide bases with single-base precision.",
+      "Because base editing avoids double-stranded breaks, it minimizes chromosomal translocations and unwanted p53 DNA damage responses."
+    ]
+  },
+  {
+    "id": "bench_05",
+    "domain": "Distributed Systems",
+    "question": "How does Raft consensus handle network partitions and split-brain scenarios?",
+    "ground_truth": "Raft prevents split-brain by requiring a strict majority quorum (N/2 + 1 votes) to elect a leader and commit log entries; the partitioned minority cannot elect a leader or commit entries, and upon reconnection, terms and log indices reconcile to the majority leader.",
+    "contexts": [
+      "In the Raft consensus algorithm, a candidate must receive votes from a strict majority of cluster nodes to become the leader for a given term.",
+      "If a network partition isolates nodes into minority and majority clusters, only the majority partition can achieve quorum to commit new log entries.",
+      "When the network heals, nodes in the minority partition observe higher term numbers from the majority leader, revert to followers, and truncate uncommitted conflicting logs."
+    ]
+  }
+]
+
