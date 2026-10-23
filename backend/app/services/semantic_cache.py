@@ -6,11 +6,7 @@ from urllib.parse import urlparse
 
 import faiss
 import numpy as np
-
-try:
-    from upstash_redis.asyncio import Redis
-except ImportError:
-    Redis = None
+from upstash_redis.asyncio import Redis
 
 from app.core.config import settings
 from app.core.logging import logger
