@@ -41,10 +41,10 @@ The entire pipeline runs asynchronously and streams every event — from subtask
 
 ```mermaid
 flowchart TD
-    USER(["User submits Research Query"])
+    USER["User submits Research Query"]
     USER --> API
 
-    subgraph T1 ["Tier 1 — Presentation (Next.js 14 App Router)"]
+    subgraph T1 ["Tier 1: Presentation (Next.js 14 App Router)"]
         DASH["Research Dashboard + Prompt Console"]
         SSE["SSE Stream Reader (EventSource / Fetch)"]
         CITE["Citation Hover Preview (Favicons + URLs)"]
@@ -52,34 +52,31 @@ flowchart TD
         HIST["Session History + URL Deep Linking"]
     end
 
-    subgraph T2 ["Tier 2 — Distributed Orchestration (FastAPI + ARQ)"]
+    subgraph T2 ["Tier 2: Orchestration (FastAPI + ARQ)"]
         API["API Gateway (POST /api/research/stream)"]
         PUBSUB["Redis Pub/Sub Channel (session_id:events)"]
         WORKER["ARQ Background Worker Process"]
         VCACHE["Semantic Vector Cache (FAISS CPU)"]
     end
 
-    subgraph T3 ["Tier 3 — LangGraph Durable State Machine"]
-        A1["1. Planner Node<br/>Query decomposition & dynamic outline"]
-        A2["2. Research Node<br/>Parallel web search & Hybrid RRF retrieval"]
-        A3["3. Verification Node<br/>Claim verification score & source quotes"]
-        A4["4. Writer Node<br/>GFM Markdown & citations with SSE streaming"]
-        A5["5. Critic Node<br/>Editor-in-chief review & conditional rewrite"]
+    subgraph T3 ["Tier 3: LangGraph Durable State Machine"]
+        A1["1. Planner Node: Query Decomposition and Outline"]
+        A2["2. Research Node: Parallel Web Search and Hybrid RRF"]
+        A3["3. Verification Node: Claim Verification and Quotes"]
+        A4["4. Writer Node: GFM Markdown and SSE Streaming"]
+        A5["5. Critic Node: Editor-in-Chief Review and Rewrites"]
     end
 
-    subgraph T4 ["Tier 4 — Resilient Multi-Model LLM Fallback Chain"]
+    subgraph T4 ["Tier 4: Resilient Multi-Model LLM Fallback Chain"]
         MM["Memori SDK (Agent Memory)"]
         L1["Primary: Gemma 4 + Gemini 3.7 Flash"]
         L2["Secondary: Gemini 3.5 Flash"]
         L3["Tertiary: Groq gpt-oss-120b"]
-        L1 -.->|"429 / Rate Limit"| L2
-        L2 -.->|"Quota Exhausted"| L3
-        MM --- L1
     end
 
-    subgraph T5 ["Tier 5 — Persistence & External Intelligence"]
-        PG[("PostgreSQL (asyncpg + Connection Pool)")]
-        RD[("Redis (Pub/Sub, Queue, Cache)")]
+    subgraph T5 ["Tier 5: Persistence and External Intelligence"]
+        PG["PostgreSQL (asyncpg Connection Pool)"]
+        RD["Redis (Pub/Sub, Queue, Cache)"]
         TV["Tavily Web Intelligence API"]
         DDG["DuckDuckGo Fallback Search"]
     end
@@ -96,7 +93,7 @@ flowchart TD
 
     WORKER -->|"Execute StateGraph"| A1
     A1 -->|"Subtask list"| A2
-    A2 -->|"Findings & sources"| A3
+    A2 -->|"Findings and sources"| A3
     A3 -->|"Verified claims"| A4
     A4 -->|"Draft report"| A5
     A5 -->|"Rewrite / Feedback"| A4
@@ -110,6 +107,9 @@ flowchart TD
     A4 --> L1
     A5 --> L1
 
+    L1 -.->|"429 / Rate Limit"| L2
+    L2 -.->|"Quota Exhausted"| L3
+    MM --> L1
     MM --> PG
 ```
 
@@ -139,7 +139,7 @@ sequenceDiagram
         Note over Agents: 1. Planner: Decompose into subtasks and dynamic outline
         Note over Agents: 2. Researcher: Parallel web search and Hybrid RRF retrieval
         Note over Agents: 3. Verifier: Claim verification with source quote extraction
-        Note over Agents: 4. Writer: GFM report with inline citations [1], [2]
+        Note over Agents: 4. Writer: GFM report with inline citations (1, 2)
         Note over Agents: 5. Critic: Quality review and rewrite loop if needed
         Agents->>LLM: Multi-model LLM calls (fallback on 429/503)
         Agents-->>API: Stream chunks via Redis Pub/Sub
