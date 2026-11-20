@@ -44,65 +44,59 @@ flowchart TD
     USER(["User submits Research Query"])
     USER --> API
 
-    subgraph T1 ["Tier 1 — Presentation — Next.js 14 App Router"]
+    subgraph T1 ["Tier 1 — Presentation (Next.js 14 App Router)"]
         DASH["Research Dashboard + Prompt Console"]
-        SSE["SSE Stream Reader — EventSource / Fetch"]
-        CITE["Citation Hover Preview — Favicons + URLs"]
-        EXP["Export Engine — PDF / Markdown / Print"]
+        SSE["SSE Stream Reader (EventSource / Fetch)"]
+        CITE["Citation Hover Preview (Favicons + URLs)"]
+        EXP["Export Engine (PDF / Markdown / Print)"]
         HIST["Session History + URL Deep Linking"]
     end
 
     subgraph T2 ["Tier 2 — Distributed Orchestration (FastAPI + ARQ)"]
-        API["API Gateway — POST /api/research/stream"]
+        API["API Gateway (POST /api/research/stream)"]
         PUBSUB["Redis Pub/Sub Channel (session_id:events)"]
         WORKER["ARQ Background Worker Process"]
-        VCACHE["Semantic Vector Cache — FAISS CPU"]
+        VCACHE["Semantic Vector Cache (FAISS CPU)"]
     end
 
     subgraph T3 ["Tier 3 — LangGraph Durable State Machine"]
-        A1["1. Planner Node
-Query decomposition + dynamic report outline"]
-        A2["2. Research Node
-Parallel web search + Hybrid RRF retrieval"]
-        A3["3. Verification Node
-LLM claim verification score + source quotes"]
-        A4["4. Writer Node
-GFM Markdown + inline citations
-Real-time SSE token streaming"]
-        A5["5. Critic Node
-Editor-in-chief quality review
-Conditional Edge: should_rewrite"]
+        A1["1. Planner Node<br/>Query decomposition & dynamic outline"]
+        A2["2. Research Node<br/>Parallel web search & Hybrid RRF retrieval"]
+        A3["3. Verification Node<br/>Claim verification score & source quotes"]
+        A4["4. Writer Node<br/>GFM Markdown & citations with SSE streaming"]
+        A5["5. Critic Node<br/>Editor-in-chief review & conditional rewrite"]
     end
 
     subgraph T4 ["Tier 4 — Resilient Multi-Model LLM Fallback Chain"]
-        MM["Memori SDK — Agent Memory"]
-        L1["Primary — Gemma 4 + Gemini 3.7 Flash"]
-        L2["Secondary — Gemini 3.5 Flash"]
-        L3["Tertiary — Groq gpt-oss-120b"]
+        MM["Memori SDK (Agent Memory)"]
+        L1["Primary: Gemma 4 + Gemini 3.7 Flash"]
+        L2["Secondary: Gemini 3.5 Flash"]
+        L3["Tertiary: Groq gpt-oss-120b"]
         L1 -.->|"429 / Rate Limit"| L2
         L2 -.->|"Quota Exhausted"| L3
-        MM ---|"Wraps LLM Clients"| L1
+        MM --- L1
     end
 
-    subgraph T5 ["Tier 5 — Persistence + External Intelligence"]
-        PG[("PostgreSQL — asyncpg + Connection Pooling")]
-        RD[("Redis — Pub/Sub, Queue, Cache")]
+    subgraph T5 ["Tier 5 — Persistence & External Intelligence"]
+        PG[("PostgreSQL (asyncpg + Connection Pool)")]
+        RD[("Redis (Pub/Sub, Queue, Cache)")]
         TV["Tavily Web Intelligence API"]
         DDG["DuckDuckGo Fallback Search"]
     end
 
     USER --> DASH
     DASH --> SSE
-    SSE <-->|"Subscribe text/event-stream"| API
+    SSE -->|"Subscribe / SSE stream"| API
+    API -->|"Stream Events"| SSE
 
     API -->|"Enqueue Job"| RD
     RD -->|"De-queue Job"| WORKER
-    API <-->|"Subscribe / Publish"| PUBSUB
+    API -->|"Subscribe"| PUBSUB
     WORKER -->|"Publish Events"| PUBSUB
 
     WORKER -->|"Execute StateGraph"| A1
     A1 -->|"Subtask list"| A2
-    A2 -->|"Findings + sources"| A3
+    A2 -->|"Findings & sources"| A3
     A3 -->|"Verified claims"| A4
     A4 -->|"Draft report"| A5
     A5 -->|"Rewrite / Feedback"| A4
@@ -110,7 +104,11 @@ Conditional Edge: should_rewrite"]
 
     A2 --> TV
     A2 -.->|"Tavily fails"| DDG
-    A1 & A2 & A3 & A4 & A5 --> L1
+    A1 --> L1
+    A2 --> L1
+    A3 --> L1
+    A4 --> L1
+    A5 --> L1
 
     MM --> PG
 ```
@@ -121,30 +119,31 @@ Conditional Edge: should_rewrite"]
 
 ```mermaid
 sequenceDiagram
+    autonumber
     actor User as User
     participant UI as Next.js Dashboard
-    participant API as FastAPI
+    participant API as FastAPI Gateway
     participant Cache as Semantic Cache
     participant Agents as 5-Stage Agent Pipeline
     participant LLM as LLM Fallback Chain
     participant DB as PostgreSQL
 
-    User->>UI: Submit query + effort tier
+    User->>UI: Submit query and effort tier
     UI->>API: POST /api/research/stream
-    API->>Cache: Check query vector (cosine ≥ 88%)
+    API->>Cache: Check query vector (cosine >= 88%)
 
     alt Cache HIT
         Cache-->>UI: Stream cached dossier instantly
     else Cache MISS
         API->>Agents: Run pipeline
-        Note over Agents: 1. Planner — Decompose into subtasks + outline
-        Note over Agents: 2. Researcher — Parallel web search + Hybrid BM25 + Dense RRF retrieval
-        Note over Agents: 3. Verifier — LLM claim verification with source quote extraction
-        Note over Agents: 4. Writer — GFM report + inline citations [n]
-        Note over Agents: 5. Critic — Quality review, rewrite if needed
-        Agents->>LLM: LLM calls (automatic fallback on 429/503)
-        Agents-->>API: Stream chunks (via Redis Pub/Sub)
-        API-->>UI: Yield SSE token
+        Note over Agents: 1. Planner: Decompose into subtasks and dynamic outline
+        Note over Agents: 2. Researcher: Parallel web search and Hybrid RRF retrieval
+        Note over Agents: 3. Verifier: Claim verification with source quote extraction
+        Note over Agents: 4. Writer: GFM report with inline citations [1], [2]
+        Note over Agents: 5. Critic: Quality review and rewrite loop if needed
+        Agents->>LLM: Multi-model LLM calls (fallback on 429/503)
+        Agents-->>API: Stream chunks via Redis Pub/Sub
+        API-->>UI: Yield SSE token events
     end
 
     UI-->>User: Final dossier with citations, verifications, cost metrics
