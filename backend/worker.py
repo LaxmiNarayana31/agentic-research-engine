@@ -1,21 +1,16 @@
-import asyncio
-import json
-import os
-import time
 import uuid
-from datetime import datetime, timezone
 from typing import Optional
 
 import redis.asyncio as redis
-from arq import worker
 from sqlalchemy.future import select
 
-from app.agents.graph import build_research_graph
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.redis_pubsub import publish_event
 from app.db.database import AsyncSessionLocal
-from app.models import JobEvent, ResearchSession
+from app.models.job_event import JobEvent
+from app.models.research_session import ResearchSession
+from app.orchestrator.graph import build_research_graph
 
 async def _persist_event_worker(session_id: str, event: dict):
     try:
