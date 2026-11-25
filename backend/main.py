@@ -1,5 +1,6 @@
 import os
 import uuid
+import warnings
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -10,7 +11,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import Request
-from starlette.responses import Response
 
 from app.api.auth_routes import router as auth_router
 from app.api.research_routes import router as research_router
@@ -26,6 +26,10 @@ from app.core.errors import (
 from app.core.logging import logger, request_id_cv, setup_logging
 from app.core.tracing import get_phoenix_url, init_phoenix_tracing
 from app.db.database import init_db
+
+warnings.filterwarnings("ignore", message=".*Skipped unsupported reflection.*")
+warnings.filterwarnings("ignore", message=".*distinct\\(\\) should not be used.*")
+warnings.filterwarnings("ignore", message=".*is not JSON serializable.*")
 
 load_dotenv(override=True)
 setup_logging()
