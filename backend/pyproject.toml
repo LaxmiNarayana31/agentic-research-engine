@@ -41,10 +41,14 @@ dependencies = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+addopts = "-p no:phoenix"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 filterwarnings = [
     "ignore:.*package.*renamed.*:RuntimeWarning",
-    "ignore:.*langchain.*sunset.*:DeprecationWarning"
+    "ignore:.*langchain.*sunset.*:DeprecationWarning",
+    "ignore:.*Skipped unsupported reflection.*",
+    "ignore:.*distinct\\(\\) should not be used.*",
+    "ignore:.*is not JSON serializable.*",
 ]
 
