@@ -2,7 +2,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.errors import AppException
 from app.core.logging import logger
 from app.db.database import get_db
@@ -18,36 +17,32 @@ from app.dtos.auth_dto import (
 )
 from app.helpers.auth_helper import get_current_user, get_optional_user
 from app.models.user import User
-from app.services.auth_service import AuthService
-from app.services.rate_limiter import rate_limiter
-from app.services.tenant_service import TenantService
+from app.services.auth_service import auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication & Tenancy"])
-auth_service = AuthService()
-tenant_service = TenantService()
 
+
+# Route 1: GET /api/auth/config
 @router.get("/config", tags=["Authentication & Tenancy"])
 async def get_auth_config():
     """Return public client configurations like Google Client ID."""
-    try:
-        return {
-            "google_client_id": settings.google_client_id or ""
-        }
-    except Exception as e:
-        logger.error(f"Error fetching auth config: {e}")
-        return {"google_client_id": ""}
+    return await auth_service.get_auth_config()
 
+
+# Route 2: POST /api/auth/signup
 @router.post("/signup", response_model=AuthResponse, status_code=201)
 async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
     """Register a new user account and provision a personal workspace."""
     try:
-        return await auth_service.register(db, req)
+        return await auth_service.signup(db, req)
     except AppException:
         raise
     except Exception as e:
         logger.error(f"Error during user signup ({req.email}): {e}")
         raise AppException(code="SIGNUP_ERROR", message=f"Registration failed: {str(e)}", status_code=500)
 
+
+# Route 3: POST /api/auth/login
 @router.post("/login", response_model=AuthResponse)
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Sign in with email and password."""
@@ -59,6 +54,8 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         logger.error(f"Error during user login ({req.email}): {e}")
         raise AppException(code="LOGIN_ERROR", message=f"Login failed: {str(e)}", status_code=500)
 
+
+# Route 4: POST /api/auth/google
 @router.post("/google", response_model=AuthResponse)
 async def google_login(req: GoogleAuthRequest, db: AsyncSession = Depends(get_db)):
     """Sign in or register with verified Google OAuth2 ID Token."""
@@ -70,6 +67,8 @@ async def google_login(req: GoogleAuthRequest, db: AsyncSession = Depends(get_db
         logger.error(f"Error during Google OAuth login: {e}")
         raise AppException(code="GOOGLE_AUTH_ERROR", message=f"Google authentication failed: {str(e)}", status_code=500)
 
+
+# Route 5: POST /api/auth/refresh
 @router.post("/refresh")
 async def refresh_token(req: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
     """Obtain a new access token using a refresh token."""
@@ -81,6 +80,8 @@ async def refresh_token(req: RefreshTokenRequest, db: AsyncSession = Depends(get
         logger.error(f"Error during token refresh: {e}")
         raise AppException(code="REFRESH_ERROR", message=f"Token refresh failed: {str(e)}", status_code=500)
 
+
+# Route 6: GET /api/auth/me
 @router.get("/me", response_model=AuthResponse)
 async def get_current_user_profile(
     user: User = Depends(get_current_user),
@@ -95,6 +96,8 @@ async def get_current_user_profile(
         logger.error(f"Error fetching user profile ({user.id}): {e}")
         raise AppException(code="PROFILE_ERROR", message="Unable to fetch profile.", status_code=500)
 
+
+# Route 7: GET /api/auth/workspaces
 @router.get("/workspaces", response_model=List[TenantResponse])
 async def list_user_workspaces(
     user: User = Depends(get_current_user),
@@ -102,13 +105,15 @@ async def list_user_workspaces(
 ):
     """List all workspaces the authenticated user has access to."""
     try:
-        return await tenant_service.list_user_workspaces(db, user.id)
+        return await auth_service.list_user_workspaces(db, user.id)
     except AppException:
         raise
     except Exception as e:
         logger.error(f"Error listing workspaces for user ({user.id}): {e}")
         raise AppException(code="WORKSPACE_LIST_ERROR", message="Unable to list workspaces.", status_code=500)
 
+
+# Route 8: POST /api/auth/workspaces
 @router.post("/workspaces", response_model=TenantResponse, status_code=201)
 async def create_new_workspace(
     req: CreateWorkspaceRequest,
@@ -117,13 +122,15 @@ async def create_new_workspace(
 ):
     """Create a new multi-tenant workspace."""
     try:
-        return await tenant_service.create_workspace(db, user.id, req.name)
+        return await auth_service.create_new_workspace(db, user.id, req.name)
     except AppException:
         raise
     except Exception as e:
         logger.error(f"Error creating workspace '{req.name}' for user ({user.id}): {e}")
         raise AppException(code="WORKSPACE_CREATE_ERROR", message="Unable to create workspace.", status_code=500)
 
+
+# Route 9: GET /api/auth/usage
 @router.get("/usage", response_model=UsageResponse)
 async def get_rate_limit_usage(
     request: Request,
@@ -131,7 +138,7 @@ async def get_rate_limit_usage(
 ):
     """Inspect current rate limit quota and remaining requests."""
     try:
-        return await rate_limiter.get_usage_summary(request, user)
+        return await auth_service.get_rate_limit_usage(request, user)
     except AppException:
         raise
     except Exception as e:
