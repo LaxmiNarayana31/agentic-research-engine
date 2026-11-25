@@ -16,12 +16,13 @@ from ddgs import DDGS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from rank_bm25 import BM25Okapi
 
+from app.clients.embedding_client import embedding_client
 from app.clients.llm_client import MultiModelLLMClient
 from app.core.config import settings
 from app.core.logging import logger
 from app.dtos.planner_dto import PlannerSubTask
 from app.dtos.researcher_dto import ResearchFinding
-from app.services.semantic_cache import semantic_cache
+from app.helpers.semantic_cache_helper import semantic_cache
 
 def _tokenize_text(text: str) -> list:
     """Fast alphanumeric lowercase tokenizer for BM25 ranking."""
@@ -195,6 +196,7 @@ class ResearchAgent:
 
     def __init__(self):
         self.llm_client = MultiModelLLMClient(agent_role='researcher')
+        self.embedding_client = embedding_client
 
     async def _search_duckduckgo(self, query: str, max_results: int = 5) -> list:
         """Fallback web search using DuckDuckGo (free, zero API key requirement) with async article scraping."""
@@ -305,7 +307,7 @@ class ResearchAgent:
             try:
                 # Embed all chunks + the query in one batched call
                 all_texts = chunks + [query]
-                all_vecs = await self.llm_client.get_embeddings(all_texts)
+                all_vecs = await self.embedding_client.get_embeddings(all_texts)
                 chunk_vecs = np.array(all_vecs[:-1], dtype=np.float32)
                 query_vec  = np.array(all_vecs[-1],  dtype=np.float32)
 
